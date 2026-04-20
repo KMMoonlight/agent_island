@@ -1,4 +1,6 @@
-import { Buffer } from 'node:buffer';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { Menu, Tray, app, nativeImage } from 'electron';
 
@@ -9,22 +11,35 @@ type TrayMenuActions = {
   onOpenConfig: () => void;
 };
 
-function createTrayIcon() {
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
-      <path
-        fill="#000000"
-        fill-rule="evenodd"
-        d="M2.25 11a5.25 5.25 0 0 1 5.25-5.25h7a5.25 5.25 0 1 1 0 10.5h-7A5.25 5.25 0 0 1 2.25 11Zm10.55 0a2.1 2.1 0 1 0 4.2 0a2.1 2.1 0 0 0-4.2 0Z"
-      />
-    </svg>
-  `;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-  const icon = nativeImage
-    .createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`)
-    .resize({ width: 18, height: 18 });
+function resolveTrayIconPath(fileName: string): string {
+  const developmentPath = path.join(process.cwd(), 'src/main/tray', fileName);
+
+  if (existsSync(developmentPath)) {
+    return developmentPath;
+  }
+
+  return path.join(__dirname, fileName);
+}
+
+function createTrayIcon() {
+  const iconPath = resolveTrayIconPath('trayTemplate.png');
+  const retinaIconPath = resolveTrayIconPath('trayTemplate@2x.png');
+  const icon = nativeImage.createFromPath(iconPath);
 
   icon.setTemplateImage(true);
+
+  const retinaIcon = nativeImage.createFromPath(retinaIconPath);
+
+  if (!retinaIcon.isEmpty()) {
+    icon.addRepresentation({
+      scaleFactor: 2,
+      width: 32,
+      height: 32,
+      buffer: retinaIcon.toPNG(),
+    });
+  }
 
   return icon;
 }

@@ -23,14 +23,14 @@ export class SourcePoller {
     private readonly sourceStore: SourceStore
   ) {}
 
-  async start(): Promise<void> {
+  start(): void {
     const config = this.configService.getConfig();
-    await this.applyConfig(config);
+    this.applyConfig(config);
   }
 
-  async reload(): Promise<void> {
+  reload(): void {
     const config = this.configService.reloadConfig();
-    await this.applyConfig(config);
+    this.applyConfig(config);
   }
 
   stop(): void {
@@ -41,17 +41,17 @@ export class SourcePoller {
     this.timers.clear();
   }
 
-  private async applyConfig(config: AppConfig): Promise<void> {
+  private applyConfig(config: AppConfig): void {
     this.stop();
     this.sourceStore.initialize(config);
 
-    await Promise.all(config.sources.map(async (source) => {
-      await this.refreshSource(source);
+    for (const source of config.sources) {
+      void this.refreshSource(source);
       const timer = setInterval(() => {
         void this.refreshSource(source);
       }, source.refreshIntervalMs);
       this.timers.set(source.id, timer);
-    }));
+    }
   }
 
   private async refreshSource(config: SourceConfig): Promise<void> {

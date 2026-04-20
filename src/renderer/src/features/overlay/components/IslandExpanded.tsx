@@ -10,11 +10,13 @@ type IslandExpandedProps = {
 
 export function IslandExpanded({ state, onOpenTarget, onReloadConfig }: IslandExpandedProps): JSX.Element {
   return (
-    <>
+    <div className="island__expanded-stage">
       <header className="island__expanded-header">
-        <div>
+        <div className="island__expanded-heading">
           <p className="island__eyebrow">All sources</p>
-          <h1 className="island__expanded-title">{state.sources.length} configured feed{state.sources.length === 1 ? '' : 's'}</h1>
+          <h1 className="island__expanded-title">
+            {state.sources.length} configured feed{state.sources.length === 1 ? '' : 's'}
+          </h1>
         </div>
         <button
           type="button"
@@ -32,6 +34,6 @@ export function IslandExpanded({ state, onOpenTarget, onReloadConfig }: IslandEx
           <SourcePanel key={source.id} source={source} onOpenTarget={onOpenTarget} />
         ))}
       </div>
-    </>
+    </div>
   );
 }

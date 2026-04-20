@@ -2,7 +2,8 @@ import './env-setup';
 
 import path from 'node:path';
 
-import { BrowserWindow, app } from 'electron';
+import { app } from 'electron';
+import type { BrowserWindow } from 'electron';
 
 import { IPC_CHANNELS } from '../shared/constants/channels';
 import type { OverlayWindowMode } from '../shared/types/ipc';
@@ -14,7 +15,8 @@ import { ConfigService } from './services/config/config-service';
 import { SourcePoller } from './services/sources/source-poller';
 import { SourceStore } from './services/state/source-store';
 import { TrayMenu } from './tray/tray-menu';
-import { createOverlayWindow, setOverlayWindowMode } from './windows/overlay-window';
+import { createOverlayHost } from './windows/create-overlay-host';
+import type { OverlayHost } from './windows/overlay-host';
 
 const logger = baseLogger.scope('main');
 const configService = new ConfigService();
@@ -29,7 +31,7 @@ const trayMenu = new TrayMenu({
   },
 });
 
-let overlayWindow: BrowserWindow | null = null;
+let overlayHost: OverlayHost | null = null;
 let overlayWindowMode: OverlayWindowMode = 'compact';
 
 async function loadRenderer(window: BrowserWindow): Promise<void> {
@@ -43,15 +45,16 @@ async function loadRenderer(window: BrowserWindow): Promise<void> {
 
 async function createApp(): Promise<void> {
   overlayWindowMode = 'compact';
-  overlayWindow = createOverlayWindow();
-  await loadRenderer(overlayWindow);
+  overlayHost = createOverlayHost(loadRenderer);
+  await overlayHost.load();
 
-  overlayWindow.once('ready-to-show', () => {
-    overlayWindow?.showInactive();
-  });
+  overlayHost.showInactive();
 
-  overlayWindow.on('closed', () => {
-    overlayWindow = null;
+  const hostStatus = overlayHost.getStatus();
+  logger.info('Overlay host ready', hostStatus);
+
+  overlayHost.onClosed(() => {
+    overlayHost = null;
     overlayWindowMode = 'compact';
   });
 }
@@ -69,11 +72,11 @@ function wireStoreUpdates(): void {
   sourceStore.subscribe((state) => {
     trayMenu.update(sourceStore.getStatus());
 
-    if (!overlayWindow || overlayWindow.isDestroyed()) {
+    if (!overlayHost || overlayHost.isDestroyed()) {
       return;
     }
 
-    overlayWindow.webContents.send(IPC_CHANNELS.OVERLAY.UPDATED, state);
+    overlayHost.send(IPC_CHANNELS.OVERLAY.UPDATED, state);
   });
 }
 
@@ -85,26 +88,26 @@ app.whenReady().then(async () => {
     setOverlayExpanded: (expanded) => {
       overlayWindowMode = expanded ? 'expanded' : 'compact';
 
-      if (!overlayWindow || overlayWindow.isDestroyed()) {
+      if (!overlayHost || overlayHost.isDestroyed()) {
         return overlayWindowMode;
       }
 
-      return setOverlayWindowMode(overlayWindow, overlayWindowMode);
+      return overlayHost.setMode(overlayWindowMode);
     },
   });
   wireStoreUpdates();
 
-  await sourcePoller.start();
+  sourcePoller.start();
   trayMenu.create(sourceStore.getStatus());
   await createApp();
 
   app.on('activate', async () => {
-    if (overlayWindow === null || overlayWindow.isDestroyed()) {
+    if (overlayHost === null || overlayHost.isDestroyed()) {
       await createApp();
       return;
     }
 
-    overlayWindow.showInactive();
+    overlayHost.showInactive();
   });
 });
 

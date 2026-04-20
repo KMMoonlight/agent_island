@@ -2,9 +2,11 @@ import { BrowserWindow, screen } from 'electron';
 import path from 'node:path';
 
 import { APP_CONFIG } from '../../shared/constants/config';
-import type { OverlayWindowMode } from '../../shared/types/ipc';
+import type { OverlayHost, OverlayHostStatus, OverlayHostWindowMode } from './overlay-host';
 
-type WindowBounds = {
+export type WindowContentLoader = (window: BrowserWindow) => Promise<void>;
+
+export type WindowBounds = {
   x: number;
   y: number;
   width: number;
@@ -19,7 +21,7 @@ type WindowAnimationSettings = {
 
 const windowAnimationTimers = new WeakMap<BrowserWindow, NodeJS.Timeout>();
 
-function getOverlayTop(display: Electron.Display, mode: OverlayWindowMode): number {
+export function getOverlayTop(display: Electron.Display, mode: OverlayHostWindowMode): number {
   const compactTop = display.workArea.y - APP_CONFIG.window.compactHeight + APP_CONFIG.window.compactTopMargin;
 
   if (mode === 'expanded') {
@@ -29,7 +31,7 @@ function getOverlayTop(display: Electron.Display, mode: OverlayWindowMode): numb
   return compactTop;
 }
 
-function getOverlayBounds(mode: OverlayWindowMode): WindowBounds {
+export function getOverlayBounds(mode: OverlayHostWindowMode): WindowBounds {
   const display = screen.getPrimaryDisplay();
   const width = mode === 'expanded' ? APP_CONFIG.window.expandedWidth : APP_CONFIG.window.compactWidth;
   const height = mode === 'expanded' ? APP_CONFIG.window.expandedHeight : APP_CONFIG.window.compactHeight;
@@ -39,7 +41,7 @@ function getOverlayBounds(mode: OverlayWindowMode): WindowBounds {
   return { x, y, width, height };
 }
 
-function clearWindowAnimation(window: BrowserWindow): void {
+export function clearWindowAnimation(window: BrowserWindow): void {
   const activeTimer = windowAnimationTimers.get(window);
 
   if (!activeTimer) {
@@ -48,6 +50,10 @@ function clearWindowAnimation(window: BrowserWindow): void {
 
   clearInterval(activeTimer);
   windowAnimationTimers.delete(window);
+}
+
+export function setWindowAnimationTimer(window: BrowserWindow, timer: NodeJS.Timeout): void {
+  windowAnimationTimers.set(window, timer);
 }
 
 function applyWindowBounds(
@@ -67,42 +73,24 @@ function applyWindowBounds(
   window.setPosition(bounds.x, bounds.y, false);
 }
 
-function easeOutSoftBack(progress: number): number {
+export function easeOutSoftBack(progress: number): number {
   const overshoot = 1.02;
   const coefficient = overshoot + 1;
 
   return 1 + coefficient * Math.pow(progress - 1, 3) + overshoot * Math.pow(progress - 1, 2);
 }
 
-function easeInOutQuart(progress: number): number {
+export function easeInOutQuart(progress: number): number {
   return progress < 0.5
     ? 8 * Math.pow(progress, 4)
     : 1 - Math.pow(-2 * progress + 2, 4) / 2;
 }
 
-function interpolate(start: number, end: number, progress: number): number {
+export function interpolate(start: number, end: number, progress: number): number {
   return Math.round(start + (end - start) * progress);
 }
 
-function logOverlayBounds(
-  stage: string,
-  mode: OverlayWindowMode,
-  window: BrowserWindow,
-  extra: Record<string, unknown> = {}
-): void {
-  const display = screen.getDisplayMatching(window.getBounds());
-
-  console.info('[overlay-window]', {
-    stage,
-    mode,
-    windowBounds: window.getBounds(),
-    displayBounds: display.bounds,
-    displayWorkArea: display.workArea,
-    ...extra,
-  });
-}
-
-function getWindowAnimationSettings(mode: OverlayWindowMode): WindowAnimationSettings {
+function getWindowAnimationSettings(mode: OverlayHostWindowMode): WindowAnimationSettings {
   return mode === 'expanded'
     ? {
         durationMs: APP_CONFIG.window.expandTransitionMs,
@@ -116,7 +104,7 @@ function getWindowAnimationSettings(mode: OverlayWindowMode): WindowAnimationSet
       };
 }
 
-function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds, mode: OverlayWindowMode): void {
+function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds, mode: OverlayHostWindowMode): void {
   clearWindowAnimation(window);
 
   if (window.isDestroyed()) {
@@ -148,16 +136,9 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
     initialBounds.width !== targetBounds.width ||
     initialBounds.height !== targetBounds.height;
 
-  logOverlayBounds('animate:start', mode, window, {
-    initialBounds,
-    targetBounds,
-    hasChanges,
-  });
-
   if (!hasChanges) {
-    applyWindowBounds(window, targetBounds);
-    logOverlayBounds('animate:no-change', mode, window, {
-      targetBounds,
+    applyWindowBounds(window, targetBounds, {
+      preserveY: true,
     });
     return;
   }
@@ -188,24 +169,11 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
 
     if (!didLogFirstFrame) {
       didLogFirstFrame = true;
-      logOverlayBounds('animate:first-frame', mode, window, {
-        linearProgress,
-        sizeProgress,
-        nextBounds,
-        targetBounds,
-      });
     }
 
     if (linearProgress >= 1) {
       applyWindowBounds(window, targetBounds, {
         preserveY: animation.lockTopEdge,
-      });
-      logOverlayBounds('animate:end', mode, window, {
-        linearProgress,
-        sizeProgress,
-        nextBounds,
-        targetBounds,
-        finalBounds: window.getBounds(),
       });
       clearWindowAnimation(window);
     }
@@ -217,20 +185,10 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
     applyFrame();
   }, 1000 / 60);
 
-  windowAnimationTimers.set(window, timer);
+  setWindowAnimationTimer(window, timer);
 }
 
-export function setOverlayWindowMode(window: BrowserWindow, mode: OverlayWindowMode): OverlayWindowMode {
-  if (window.isDestroyed()) {
-    return mode;
-  }
-
-  animateOverlayWindow(window, getOverlayBounds(mode), mode);
-
-  return mode;
-}
-
-export function createOverlayWindow(): BrowserWindow {
+export function createOverlayBrowserWindow(): BrowserWindow {
   const window = new BrowserWindow({
     ...getOverlayBounds('compact'),
     show: false,
@@ -253,8 +211,41 @@ export function createOverlayWindow(): BrowserWindow {
   window.setAlwaysOnTop(true, 'screen-saver');
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   window.setFullScreenable(false);
-
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   return window;
+}
+
+export function createBrowserOverlayHost(
+  loadContent: WindowContentLoader,
+  fallbackReason: string | null = null
+): OverlayHost {
+  const window = createOverlayBrowserWindow();
+  const status: OverlayHostStatus = {
+    active: 'browser-window',
+    fallbackReason,
+  };
+
+  return {
+    load: () => loadContent(window),
+    showInactive: () => {
+      window.showInactive();
+    },
+    onClosed: (callback) => {
+      window.on('closed', callback);
+    },
+    isDestroyed: () => window.isDestroyed(),
+    send: (channel, payload) => {
+      window.webContents.send(channel, payload);
+    },
+    setMode: (mode) => {
+      animateOverlayWindow(window, getOverlayBounds(mode), mode);
+      return mode;
+    },
+    destroy: () => {
+      clearWindowAnimation(window);
+      window.destroy();
+    },
+    getStatus: () => status,
+  };
 }

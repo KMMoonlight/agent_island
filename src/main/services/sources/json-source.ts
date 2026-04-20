@@ -1,7 +1,7 @@
-import { logger as baseLogger } from '../logger';
-
+import { APP_CONFIG } from '../../../shared/constants/config';
 import type { SourceConfig } from '../../../shared/types/config';
 import type { SourceFetchResult, SourceFetcher } from './types';
+import { logger as baseLogger } from '../logger';
 
 function toJsonItems(payload: unknown): ReadonlyArray<unknown> {
   if (Array.isArray(payload)) {
@@ -23,27 +23,41 @@ function toJsonItems(payload: unknown): ReadonlyArray<unknown> {
   return [{ value: payload }];
 }
 
+function createJsonTimeoutError(config: SourceConfig): Error {
+  return new Error(`JSON source request timed out after ${APP_CONFIG.polling.requestTimeoutMs}ms: ${config.url}`);
+}
+
 export class JsonSource implements SourceFetcher {
   private readonly logger = baseLogger.scope('sources:json');
 
   async fetch(config: SourceConfig): Promise<SourceFetchResult> {
-    const response = await fetch(config.url);
+    try {
+      const response = await fetch(config.url, {
+        signal: AbortSignal.timeout(APP_CONFIG.polling.requestTimeoutMs),
+      });
 
-    if (!response.ok) {
-      throw new Error(`JSON source request failed with ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`JSON source request failed with ${response.status}`);
+      }
+
+      const payload: unknown = await response.json();
+      const items = toJsonItems(payload);
+
+      this.logger.debug('Fetched JSON source', {
+        sourceId: config.id,
+        itemCount: items.length,
+      });
+
+      return {
+        items,
+        fetchedAtMs: Date.now(),
+      };
+    } catch (error) {
+      if (error instanceof Error && error.name === 'TimeoutError') {
+        throw createJsonTimeoutError(config);
+      }
+
+      throw error;
     }
-
-    const payload: unknown = await response.json();
-    const items = toJsonItems(payload);
-
-    this.logger.debug('Fetched JSON source', {
-      sourceId: config.id,
-      itemCount: items.length,
-    });
-
-    return {
-      items,
-      fetchedAtMs: Date.now(),
-    };
   }
 }

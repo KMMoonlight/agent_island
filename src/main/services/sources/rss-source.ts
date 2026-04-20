@@ -1,9 +1,9 @@
 import Parser from 'rss-parser';
 
-import { logger as baseLogger } from '../logger';
-
+import { APP_CONFIG } from '../../../shared/constants/config';
 import type { SourceConfig } from '../../../shared/types/config';
 import type { SourceFetchResult, SourceFetcher } from './types';
+import { logger as baseLogger } from '../logger';
 
 type RssItemRecord = {
   title?: string;
@@ -14,12 +14,11 @@ type RssItemRecord = {
 };
 
 export class RssSource implements SourceFetcher {
-  private readonly parser = new Parser();
-
   private readonly logger = baseLogger.scope('sources:rss');
 
   async fetch(config: SourceConfig): Promise<SourceFetchResult> {
-    const feed = await this.parser.parseURL(config.url);
+    const parser = new Parser({ timeout: APP_CONFIG.polling.requestTimeoutMs });
+    const feed = await parser.parseURL(config.url);
     const items: RssItemRecord[] = feed.items.map((item) => ({
       title: item.title,
       contentSnippet: item.contentSnippet,
