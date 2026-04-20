@@ -1,0 +1,20 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": "./.trellis/spec/frontend/ipc-electron.md", "reason": "Typed preload and IPC bridge"}
+{"file": "./.trellis/spec/frontend/electron-browser-api-restrictions.md", "reason": "Electron renderer API limits"}
+{"file": "./.trellis/spec/frontend/react-pitfalls.md", "reason": "Safe React state and timer patterns"}
+{"file": "./.trellis/spec/frontend/type-safety.md", "reason": "Renderer shared types and aliases"}
+{"file": "./.trellis/spec/frontend/directory-structure.md", "reason": "Electron React project layout"}
+{"file": "./.trellis/spec/frontend/css-design.md", "reason": "Centralized CSS tokens and component styles"}
+{"file": "./.trellis/spec/frontend/quality.md", "reason": "pnpm lint and renderer quality rules"}
+{"file": "./.trellis/spec/backend/environment.md", "reason": "Import env setup first for userData isolation"}
+{"file": "./.trellis/spec/backend/logging.md", "reason": "Scoped structured Electron logging"}
+{"file": "./.trellis/spec/backend/quality.md", "reason": "Main process import and test rules"}
+{"file": "./.trellis/spec/backend/type-safety.md", "reason": "Zod first backend typing"}
+{"file": "./.trellis/spec/shared/code-quality.md", "reason": "Cross project quality constraints"}
+{"file": "./.trellis/spec/shared/typescript.md", "reason": "Explicit return types and import type usage"}
+{"file": "./.trellis/spec/shared/timestamp.md", "reason": "Unix millisecond timestamp convention"}
+{"file": "./.trellis/spec/shared/pnpm-electron-setup.md", "reason": "pnpm Electron bootstrap requirements"}
+{"file": "./.trellis/spec/guides/pre-implementation-checklist.md", "reason": "Search before creating abstractions"}
+{"file": "./.trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross layer event and serialization planning"}

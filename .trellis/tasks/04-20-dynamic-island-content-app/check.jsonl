@@ -1,0 +1,11 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": "./.trellis/spec/frontend/ipc-electron.md", "reason": "Verify IPC bridge design"}
+{"file": "./.trellis/spec/frontend/react-pitfalls.md", "reason": "Verify timer and hook stability"}
+{"file": "./.trellis/spec/frontend/quality.md", "reason": "Verify renderer lint and quality"}
+{"file": "./.trellis/spec/backend/environment.md", "reason": "Verify env setup ordering"}
+{"file": "./.trellis/spec/backend/logging.md", "reason": "Verify logging setup"}
+{"file": "./.trellis/spec/backend/quality.md", "reason": "Verify main process conventions"}
+{"file": "./.trellis/spec/shared/code-quality.md", "reason": "Verify no any or non null assertions"}
+{"file": "./.trellis/spec/shared/timestamp.md", "reason": "Verify millisecond timestamps"}
+{"file": "./.trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify cross layer flow and outlets"}

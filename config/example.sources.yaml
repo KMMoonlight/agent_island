@@ -1,0 +1,43 @@
+# Dynamic Island Content configuration
+#
+# rotationIntervalMs controls how often the compact island rotates to the next source.
+rotationIntervalMs: 10000
+
+sources:
+  # Every source needs a stable id, a label, an explicit type, and a URL.
+  - id: hacker-news
+    name: Hacker News
+    type: rss
+    url: https://news.ycombinator.com/rss
+    icon: HN
+    # refreshIntervalMs controls polling for this source only.
+    refreshIntervalMs: 60000
+    # detailItemCount overrides the per-type default. RSS defaults to 3.
+    detailItemCount: 3
+    fieldMappings:
+      title: title
+      summary: contentSnippet
+      timestamp: isoDate
+      detail: contentSnippet
+      target: link
+
+  - id: weather
+    name: Weather
+    type: json
+    url: https://api.open-meteo.com/v1/forecast?latitude=31.23&longitude=121.47&current=temperature_2m,weather_code
+    icon: WX
+    # JSON defaults to 1 detail item, but you can override it.
+    detailItemCount: 1
+    refreshIntervalMs: 90000
+    fieldMappings:
+      # For JSON, paths use dot notation.
+      title: current.temperature_2m
+      summary: current.weather_code
+      timestamp: current.time
+      detail: current.temperature_2m
+
+# Optional click targets.
+# If omitted, clicking does nothing.
+# clickTarget:
+#   source: https://example.com
+#   item: https://example.com/item/{{id}}

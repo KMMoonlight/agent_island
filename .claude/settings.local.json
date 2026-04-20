@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "WebSearch",
+      "WebFetch(domain:vibeisland.app)",
+      "WebFetch(domain:electron-vite.org)",
+      "Bash(apply_patch *)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm typecheck *)",
+      "Bash(pnpm lint *)",
+      "Bash(pnpm build *)",
+      "Bash(pnpm test *)",
+      "Bash(pnpm dev *)",
+      "Bash(command -v rg)",
+      "Bash(git *)"
+    ]
+  }
+}
