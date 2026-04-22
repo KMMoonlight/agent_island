@@ -6,7 +6,7 @@ type UseOverlayStateResult = {
   state: OverlayState | null;
   isLoading: boolean;
   loadError: string | null;
-  reloadConfig: () => Promise<void>;
+  refreshSources: () => Promise<void>;
 };
 
 export function useOverlayState(): UseOverlayStateResult {
@@ -59,15 +59,15 @@ export function useOverlayState(): UseOverlayStateResult {
     };
   }, []);
 
-  const reloadConfig = useCallback(async (): Promise<void> => {
+  const refreshSources = useCallback(async (): Promise<void> => {
     setIsLoading(true);
 
     try {
-      const nextState = await window.api.config.reload();
+      const nextState = await window.api.config.refreshSources();
       setState(nextState);
       setLoadError(null);
     } catch (error) {
-      const normalizedError = error instanceof Error ? error : new Error('Failed to reload configuration');
+      const normalizedError = error instanceof Error ? error : new Error('Failed to refresh sources');
       setLoadError(normalizedError.message);
     } finally {
       setIsLoading(false);
@@ -78,6 +78,6 @@ export function useOverlayState(): UseOverlayStateResult {
     state,
     isLoading,
     loadError,
-    reloadConfig,
+    refreshSources,
   };
 }

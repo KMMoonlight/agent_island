@@ -7,7 +7,7 @@ import { Menu, Tray, app, nativeImage } from 'electron';
 import type { AppStatus } from '../../shared/types/ipc';
 
 type TrayMenuActions = {
-  onReload: () => void;
+  onRefreshSources: () => void;
   onOpenConfig: () => void;
 };
 
@@ -78,15 +78,15 @@ export class TrayMenu {
           enabled: false,
         },
         {
-          label: 'Open config file',
+          label: 'Open settings',
           click: () => {
             this.actions.onOpenConfig();
           },
         },
         {
-          label: 'Reload config',
+          label: 'Refresh sources now',
           click: () => {
-            this.actions.onReload();
+            this.actions.onRefreshSources();
           },
         },
         {

@@ -8,15 +8,19 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nativeOverlayDir = path.resolve(__dirname, 'native/macos-overlay-panel');
 const nativeOverlayLoader = path.join(nativeOverlayDir, 'index.cjs');
+const nativeOverlayBinary = path.join(nativeOverlayDir, 'build/Release/macos_overlay_panel.node');
 
-function copyNativeOverlayLoader(outDir: string): void {
-  if (!fs.existsSync(nativeOverlayLoader)) {
-    return;
+function copyNativeOverlayRuntime(outDir: string): void {
+  const targetDir = path.resolve(__dirname, outDir, 'native/macos-overlay-panel');
+  fs.mkdirSync(path.join(targetDir, 'build/Release'), { recursive: true });
+
+  if (fs.existsSync(nativeOverlayLoader)) {
+    fs.copyFileSync(nativeOverlayLoader, path.join(targetDir, 'index.cjs'));
   }
 
-  const targetDir = path.resolve(__dirname, outDir, 'native/macos-overlay-panel');
-  fs.mkdirSync(targetDir, { recursive: true });
-  fs.copyFileSync(nativeOverlayLoader, path.join(targetDir, 'index.cjs'));
+  if (fs.existsSync(nativeOverlayBinary)) {
+    fs.copyFileSync(nativeOverlayBinary, path.join(targetDir, 'build/Release/macos_overlay_panel.node'));
+  }
 }
 
 export default defineConfig({
@@ -26,7 +30,7 @@ export default defineConfig({
       {
         name: 'copy-native-overlay-loader',
         closeBundle() {
-          copyNativeOverlayLoader('out/main');
+          copyNativeOverlayRuntime('out/main');
         },
       },
     ],

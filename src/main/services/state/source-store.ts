@@ -1,6 +1,6 @@
 import { APP_CONFIG } from '../../../shared/constants/config';
 import type { AppConfig } from '../../../shared/types/config';
-import type { AppStatus } from '../../../shared/types/ipc';
+import type { AppStatus, OverlayHostKind } from '../../../shared/types/ipc';
 import type { OverlayState, SourceState } from '../../../shared/types/source-data';
 
 import { createEmptySourceState } from '../sources/source-normalizer';
@@ -27,6 +27,8 @@ export class SourceStore {
     hasErrors: false,
   };
 
+  private overlayHostKind: OverlayHostKind = 'browser-window';
+
   private readonly listeners = new Set<StoreListener>();
 
   initialize(config: AppConfig): void {
@@ -38,6 +40,10 @@ export class SourceStore {
     };
 
     this.emit();
+  }
+
+  setOverlayHostKind(overlayHostKind: OverlayHostKind): void {
+    this.overlayHostKind = overlayHostKind;
   }
 
   getState(): OverlayState {
@@ -53,6 +59,7 @@ export class SourceStore {
       hasErrors: this.state.hasErrors,
       sourceCount: this.state.sources.length,
       updatedAtMs: this.state.updatedAtMs,
+      overlayHostKind: this.overlayHostKind,
     };
   }
 

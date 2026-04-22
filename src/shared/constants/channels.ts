@@ -6,11 +6,15 @@ export const IPC_CHANNELS = {
     UPDATED: 'overlay:updated',
   },
   CONFIG: {
-    RELOAD: 'config:reload',
+    GET: 'config:get',
+    SAVE: 'config:save',
+    VALIDATE: 'config:validate',
+    REFRESH_SOURCES: 'config:refresh-sources',
   },
   APP: {
     OPEN_TARGET: 'app:open-target',
     GET_STATUS: 'app:get-status',
     SET_OVERLAY_EXPANDED: 'app:set-overlay-expanded',
+    OVERLAY_MODE_CHANGED: 'app:overlay-mode-changed',
   },
 } as const;

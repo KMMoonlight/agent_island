@@ -24,9 +24,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+#root {
+  background: transparent;
+}
+
 button,
 a {
-  font: inherit;
+  font-family: inherit;
 }
 
 :focus-visible {

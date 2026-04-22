@@ -1,7 +1,32 @@
+import type { AppConfig } from '../../shared/types/config';
+import type { AppStatus, OverlayHostKind, OverlayWindowMode, ConfigValidationResult } from '../../shared/types/ipc';
+import type { OverlayState } from '../../shared/types/source-data';
+
 export type OverlayHostWindowMode = 'compact' | 'expanded';
 
+export type OverlayRendererTarget =
+  | {
+      kind: 'url';
+      value: string;
+    }
+  | {
+      kind: 'file';
+      value: string;
+    };
+
+export type OverlayHostBridge = {
+  getOverlayState: () => OverlayState;
+  getConfig: () => AppConfig;
+  saveConfig: (config: AppConfig) => Promise<AppConfig>;
+  validateConfig: (candidate: unknown) => ConfigValidationResult;
+  refreshSources: () => Promise<OverlayState>;
+  getAppStatus: () => AppStatus;
+  openTarget: (targetUrl: string) => Promise<boolean>;
+  setOverlayExpanded: (expanded: boolean) => OverlayWindowMode;
+};
+
 export type OverlayHostStatus = {
-  active: 'native-macos-panel' | 'browser-window';
+  active: OverlayHostKind;
   fallbackReason: string | null;
 };
 

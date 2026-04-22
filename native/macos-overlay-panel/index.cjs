@@ -1,9 +1,10 @@
 /* global __dirname, module, require */
 /* eslint-disable @typescript-eslint/no-require-imports */
+const fs = require('node:fs');
 const path = require('node:path');
 
 let cachedBinding;
-let cachedError = null;
+let cachedDiagnostics = [];
 
 const candidatePaths = [
   path.join(__dirname, 'build/Release/macos_overlay_panel.node'),
@@ -12,36 +13,64 @@ const candidatePaths = [
 
 for (const candidatePath of candidatePaths) {
   try {
+    if (!fs.existsSync(candidatePath)) {
+      cachedDiagnostics.push(`missing: ${candidatePath}`);
+      continue;
+    }
+
     // We try the packaged location first, then fall back to the source tree for dev builds.
     cachedBinding = require(candidatePath);
-    cachedError = null;
+    cachedDiagnostics = [`loaded: ${candidatePath}`];
     break;
   } catch (error) {
-    cachedError = error;
+    const message = error instanceof Error ? error.message : String(error);
+    cachedDiagnostics.push(`failed: ${candidatePath} (${message})`);
   }
 }
+
+const loadDiagnostics = cachedDiagnostics.join('; ');
 
 module.exports = cachedBinding ?? {
   isSupported() {
     return false;
   },
   getUnavailableReason() {
-    if (cachedError instanceof Error) {
-      return cachedError.message;
-    }
-
-    return 'Native macOS overlay bridge binary is unavailable.';
+    return loadDiagnostics || 'Native macOS overlay bridge binary is unavailable.';
   },
-  configureWindow() {
-    return false;
+  getLoadDiagnostics() {
+    return loadDiagnostics || null;
   },
-  setFrame() {
-    return false;
-  },
-  getFrame() {
+  createPanel() {
     return null;
   },
-  orderFrontRegardless() {
+  destroyPanel() {
+    return false;
+  },
+  loadPanelUrl() {
+    return false;
+  },
+  loadPanelFile() {
+    return false;
+  },
+  setPanelMessageCallback() {
+    return false;
+  },
+  dispatchPanelMessage() {
+    return false;
+  },
+  setPanelFrame() {
+    return false;
+  },
+  getPanelFrame() {
+    return null;
+  },
+  getPanelDiagnostics() {
+    return null;
+  },
+  orderPanelFrontRegardless() {
+    return false;
+  },
+  orderPanelOut() {
     return false;
   },
 };

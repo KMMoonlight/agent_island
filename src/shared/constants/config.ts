@@ -1,14 +1,14 @@
 export const APP_CONFIG = {
   window: {
-    compactWidth: 400,
+    compactWidth: 376,
     compactHeight: 32,
     expandedWidth: 600,
     expandedHeight: 360,
-    compactTopMargin: 0,
-    expandedTopMargin: 0,
+    compactTopMargin: -1,
+    expandedTopMargin: -2,
     hoverPadding: 14,
-    expandTransitionMs: 380,
-    collapseTransitionMs: 280,
+    expandTransitionMs: 420,
+    collapseTransitionMs: 300,
     expandHoverDelayMs: 130,
     collapseHoverDelayMs: 240,
     expandedRadiusPx: 14,
@@ -21,6 +21,5 @@ export const APP_CONFIG = {
   },
   detailItemDefaults: {
     json: 1,
-    rss: 3,
   },
 } as const;

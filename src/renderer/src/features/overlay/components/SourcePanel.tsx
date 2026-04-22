@@ -5,22 +5,20 @@ type SourcePanelProps = {
   onOpenTarget: (targetUrl: string | undefined) => void;
 };
 
-function formatTimestamp(timestampMs: number | null): string | null {
-  if (timestampMs === null) {
-    return null;
-  }
+function getTitleText(item: OverlayItem): string {
+  const trimmedTitle = item.title?.trim();
+  return trimmedTitle && trimmedTitle.length > 0 ? trimmedTitle : 'None';
+}
 
-  return new Intl.DateTimeFormat('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    month: 'short',
-    day: 'numeric',
-  }).format(new Date(timestampMs));
+function getPrimaryText(item: OverlayItem): string {
+  const trimmedDetail = item.detail?.trim();
+  return trimmedDetail && trimmedDetail.length > 0 ? trimmedDetail : 'None';
 }
 
 function renderItem(item: OverlayItem, onOpenTarget: (targetUrl: string | undefined) => void): JSX.Element {
-  const timestamp = formatTimestamp(item.timestampMs);
   const isClickable = Boolean(item.clickTarget);
+  const titleText = getTitleText(item);
+  const primaryText = getPrimaryText(item);
 
   return (
     <li key={item.id} className="source-panel__item">
@@ -32,36 +30,33 @@ function renderItem(item: OverlayItem, onOpenTarget: (targetUrl: string | undefi
         }}
         disabled={!isClickable}
       >
-        <div className="source-panel__item-head">
-          <strong>{item.title}</strong>
-          {timestamp ? <span>{timestamp}</span> : null}
+        <div className="source-panel__item-copy">
+          <p className="source-panel__item-title">{titleText}</p>
+          <p className="source-panel__item-detail">{primaryText}</p>
         </div>
-        {item.summary ? <p>{item.summary}</p> : null}
-        {item.detail && item.detail !== item.summary ? <p>{item.detail}</p> : null}
       </button>
     </li>
   );
 }
 
 export function SourcePanel({ source, onOpenTarget }: SourcePanelProps): JSX.Element {
+  if (source.items.length === 0) {
+    return (
+      <article className={`source-panel source-panel--${source.status}`}>
+        {source.lastError ? <p className="source-panel__error">{source.lastError.message}</p> : null}
+        <ul className="source-panel__list">
+          <li className="source-panel__empty">No items available yet.</li>
+        </ul>
+      </article>
+    );
+  }
+
   return (
     <article className={`source-panel source-panel--${source.status}`}>
-      <header className="source-panel__header">
-        <div>
-          <p className="source-panel__eyebrow">{source.type.toUpperCase()}</p>
-          <h2>{source.name}</h2>
-        </div>
-        <span className="source-panel__status">{source.status}</span>
-      </header>
-
       {source.lastError ? <p className="source-panel__error">{source.lastError.message}</p> : null}
 
       <ul className="source-panel__list">
-        {source.items.length > 0 ? (
-          source.items.map((item) => renderItem(item, onOpenTarget))
-        ) : (
-          <li className="source-panel__empty">No items available yet.</li>
-        )}
+        {source.items.map((item) => renderItem(item, onOpenTarget))}
       </ul>
     </article>
   );

@@ -6,7 +6,7 @@ type OverlayContextValue = {
   state: OverlayState | null;
   isLoading: boolean;
   loadError: string | null;
-  reloadConfig: () => Promise<void>;
+  refreshSources: () => Promise<void>;
 };
 
 export const OverlayContext = createContext<OverlayContextValue | null>(null);

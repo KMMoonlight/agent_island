@@ -4,3 +4,4 @@ node_modules/*
 out/
 native/macos-overlay-panel/build/
 native/node_modules/
+.tmp-open-vibe-island/

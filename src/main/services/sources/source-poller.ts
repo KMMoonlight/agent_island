@@ -33,6 +33,10 @@ export class SourcePoller {
     this.applyConfig(config);
   }
 
+  getState() {
+    return this.sourceStore.getState();
+  }
+
   stop(): void {
     for (const timer of this.timers.values()) {
       clearInterval(timer);

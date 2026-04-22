@@ -11,7 +11,7 @@
         "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
         "MACOSX_DEPLOYMENT_TARGET": "12.0"
       },
-      "libraries": ["-framework AppKit", "-framework CoreGraphics"]
+      "libraries": ["-framework AppKit", "-framework CoreGraphics", "-framework WebKit"]
     }
   ]
 }

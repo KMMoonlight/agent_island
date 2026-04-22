@@ -1,0 +1,16 @@
+@import './tokens.css';
+@import './base.css';
+
+body[data-route='config'],
+body[data-route='config'] #root {
+  background: #fafafa;
+}
+
+body[data-route='config'] {
+  overflow: auto;
+  color: #09090b;
+}
+
+body[data-route='config'] .config-page {
+  min-height: 100vh;
+}

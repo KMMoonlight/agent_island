@@ -3,8 +3,9 @@ import path from 'node:path';
 
 import { APP_CONFIG } from '../../shared/constants/config';
 import type { OverlayHost, OverlayHostStatus, OverlayHostWindowMode } from './overlay-host';
+import { createBrowserWindowContentHost, type OverlayContentHost } from './overlay-content-host';
 
-export type WindowContentLoader = (window: BrowserWindow) => Promise<void>;
+export type WindowContentLoader = (contentHost: OverlayContentHost) => Promise<void>;
 
 export type WindowBounds = {
   x: number;
@@ -16,16 +17,29 @@ export type WindowBounds = {
 type WindowAnimationSettings = {
   durationMs: number;
   easeSize: (progress: number) => number;
+  easePosition: (progress: number) => number;
   lockTopEdge: boolean;
+  positionStartProgress: number;
 };
 
 const windowAnimationTimers = new WeakMap<BrowserWindow, NodeJS.Timeout>();
+const BROWSER_HOST_TOP_COMPENSATION = {
+  compact: -2,
+  expanded: -1,
+} as const;
+const BROWSER_HOST_BOUNDS_COMPENSATION = {
+  compactHeight: 2,
+} as const;
 
 export function getOverlayTop(display: Electron.Display, mode: OverlayHostWindowMode): number {
-  const compactTop = display.workArea.y - APP_CONFIG.window.compactHeight + APP_CONFIG.window.compactTopMargin;
+  const compactTop =
+    display.workArea.y +
+    BROWSER_HOST_TOP_COMPENSATION.compact -
+    APP_CONFIG.window.compactHeight +
+    APP_CONFIG.window.compactTopMargin;
 
   if (mode === 'expanded') {
-    return compactTop + APP_CONFIG.window.expandedTopMargin;
+    return compactTop + APP_CONFIG.window.expandedTopMargin + BROWSER_HOST_TOP_COMPENSATION.expanded;
   }
 
   return compactTop;
@@ -39,6 +53,19 @@ export function getOverlayBounds(mode: OverlayHostWindowMode): WindowBounds {
   const y = getOverlayTop(display, mode);
 
   return { x, y, width, height };
+}
+
+function getBrowserOverlayBounds(mode: OverlayHostWindowMode): WindowBounds {
+  const bounds = getOverlayBounds(mode);
+
+  if (mode === 'compact') {
+    return {
+      ...bounds,
+      height: bounds.height + BROWSER_HOST_BOUNDS_COMPENSATION.compactHeight,
+    };
+  }
+
+  return bounds;
 }
 
 export function clearWindowAnimation(window: BrowserWindow): void {
@@ -56,34 +83,63 @@ export function setWindowAnimationTimer(window: BrowserWindow, timer: NodeJS.Tim
   windowAnimationTimers.set(window, timer);
 }
 
+function normalizeWindowBounds(bounds: WindowBounds): WindowBounds {
+  const sanitize = (value: number, fallback: number): number => {
+    if (!Number.isFinite(value)) {
+      return fallback;
+    }
+
+    return Math.round(value);
+  };
+
+  return {
+    x: sanitize(bounds.x, 0),
+    y: sanitize(bounds.y, 0),
+    width: Math.max(1, sanitize(bounds.width, APP_CONFIG.window.compactWidth)),
+    height: Math.max(1, sanitize(bounds.height, APP_CONFIG.window.compactHeight)),
+  };
+}
+
 function applyWindowBounds(
   window: BrowserWindow,
   bounds: WindowBounds,
   options: { preserveY?: boolean } = {}
 ): void {
+  const normalizedBounds = normalizeWindowBounds(bounds);
+
   if (options.preserveY) {
     const currentBounds = window.getBounds();
 
-    window.setSize(bounds.width, bounds.height, false);
-    window.setPosition(bounds.x, currentBounds.y, false);
+    window.setSize(normalizedBounds.width, normalizedBounds.height, false);
+    window.setPosition(normalizedBounds.x, currentBounds.y, false);
     return;
   }
 
-  window.setBounds(bounds, false);
-  window.setPosition(bounds.x, bounds.y, false);
+  window.setBounds(normalizedBounds, false);
 }
 
-export function easeOutSoftBack(progress: number): number {
-  const overshoot = 1.02;
-  const coefficient = overshoot + 1;
+export function easeOutSmoothSpring(progress: number): number {
+  const damping = 5.2;
+  const angularFrequency = 7.6;
+  const value = 1 - Math.exp(-damping * progress) * Math.cos(angularFrequency * progress);
 
-  return 1 + coefficient * Math.pow(progress - 1, 3) + overshoot * Math.pow(progress - 1, 2);
+  return Math.min(1, value);
 }
 
-export function easeInOutQuart(progress: number): number {
-  return progress < 0.5
-    ? 8 * Math.pow(progress, 4)
-    : 1 - Math.pow(-2 * progress + 2, 4) / 2;
+export function easeOutSmooth(progress: number): number {
+  return 1 - Math.pow(1 - progress, 4);
+}
+
+export function easeInOutSmooth(progress: number): number {
+  return progress * progress * (3 - 2 * progress);
+}
+
+export function easeInOutSoft(progress: number): number {
+  if (progress < 0.5) {
+    return 8 * progress * progress * progress * progress;
+  }
+
+  return 1 - Math.pow(-2 * progress + 2, 4) / 2;
 }
 
 export function interpolate(start: number, end: number, progress: number): number {
@@ -94,13 +150,17 @@ function getWindowAnimationSettings(mode: OverlayHostWindowMode): WindowAnimatio
   return mode === 'expanded'
     ? {
         durationMs: APP_CONFIG.window.expandTransitionMs,
-        easeSize: easeOutSoftBack,
+        easeSize: easeOutSmooth,
+        easePosition: easeInOutSmooth,
         lockTopEdge: true,
+        positionStartProgress: 0.76,
       }
     : {
         durationMs: APP_CONFIG.window.collapseTransitionMs,
-        easeSize: easeInOutQuart,
+        easeSize: easeInOutSoft,
+        easePosition: easeInOutSmooth,
         lockTopEdge: true,
+        positionStartProgress: 0.58,
       };
 }
 
@@ -112,7 +172,7 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
   }
 
   if (mode === 'expanded') {
-    const compactBounds = getOverlayBounds('compact');
+    const compactBounds = getBrowserOverlayBounds('compact');
     const currentBounds = window.getBounds();
 
     if (currentBounds.y !== compactBounds.y) {
@@ -146,7 +206,6 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
   const animation = getWindowAnimationSettings(mode);
   const startedAt = Date.now();
   const lockedY = window.getBounds().y;
-  let didLogFirstFrame = false;
   const applyFrame = () => {
     if (window.isDestroyed()) {
       clearWindowAnimation(window);
@@ -156,25 +215,22 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
     const elapsed = Date.now() - startedAt;
     const linearProgress = Math.min(elapsed / animation.durationMs, 1);
     const sizeProgress = animation.easeSize(linearProgress);
+    const shouldSettleY = animation.lockTopEdge && lockedY !== targetBounds.y;
+    const normalizedPositionProgress = shouldSettleY
+      ? Math.max(0, (linearProgress - animation.positionStartProgress) / (1 - animation.positionStartProgress))
+      : 1;
+    const positionProgress = shouldSettleY ? animation.easePosition(normalizedPositionProgress) : sizeProgress;
     const nextBounds = {
       x: interpolate(initialBounds.x, targetBounds.x, sizeProgress),
-      y: animation.lockTopEdge ? lockedY : interpolate(initialBounds.y, targetBounds.y, sizeProgress),
+      y: animation.lockTopEdge ? interpolate(lockedY, targetBounds.y, positionProgress) : interpolate(initialBounds.y, targetBounds.y, sizeProgress),
       width: interpolate(initialBounds.width, targetBounds.width, sizeProgress),
       height: interpolate(initialBounds.height, targetBounds.height, sizeProgress),
     };
 
-    applyWindowBounds(window, nextBounds, {
-      preserveY: animation.lockTopEdge,
-    });
-
-    if (!didLogFirstFrame) {
-      didLogFirstFrame = true;
-    }
+    applyWindowBounds(window, nextBounds);
 
     if (linearProgress >= 1) {
-      applyWindowBounds(window, targetBounds, {
-        preserveY: animation.lockTopEdge,
-      });
+      applyWindowBounds(window, targetBounds);
       clearWindowAnimation(window);
     }
   };
@@ -190,7 +246,7 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
 
 export function createOverlayBrowserWindow(): BrowserWindow {
   const window = new BrowserWindow({
-    ...getOverlayBounds('compact'),
+    ...getBrowserOverlayBounds('compact'),
     show: false,
     frame: false,
     transparent: true,
@@ -226,8 +282,10 @@ export function createBrowserOverlayHost(
     fallbackReason,
   };
 
+  const contentHost = createBrowserWindowContentHost(window);
+
   return {
-    load: () => loadContent(window),
+    load: () => loadContent(contentHost),
     showInactive: () => {
       window.showInactive();
     },
@@ -236,10 +294,10 @@ export function createBrowserOverlayHost(
     },
     isDestroyed: () => window.isDestroyed(),
     send: (channel, payload) => {
-      window.webContents.send(channel, payload);
+      contentHost.send(channel, payload);
     },
     setMode: (mode) => {
-      animateOverlayWindow(window, getOverlayBounds(mode), mode);
+      animateOverlayWindow(window, getBrowserOverlayBounds(mode), mode);
       return mode;
     },
     destroy: () => {

@@ -84,24 +84,6 @@ function interpolate(start: number, end: number, progress: number): number {
   return Math.round(start + (end - start) * progress);
 }
 
-function logOverlayBounds(
-  stage: string,
-  mode: OverlayWindowMode,
-  window: BrowserWindow,
-  extra: Record<string, unknown> = {}
-): void {
-  const display = screen.getDisplayMatching(window.getBounds());
-
-  console.info('[overlay-window]', {
-    stage,
-    mode,
-    windowBounds: window.getBounds(),
-    displayBounds: display.bounds,
-    displayWorkArea: display.workArea,
-    ...extra,
-  });
-}
-
 function getWindowAnimationSettings(mode: OverlayWindowMode): WindowAnimationSettings {
   return mode === 'expanded'
     ? {
@@ -148,17 +130,8 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
     initialBounds.width !== targetBounds.width ||
     initialBounds.height !== targetBounds.height;
 
-  logOverlayBounds('animate:start', mode, window, {
-    initialBounds,
-    targetBounds,
-    hasChanges,
-  });
-
   if (!hasChanges) {
     applyWindowBounds(window, targetBounds);
-    logOverlayBounds('animate:no-change', mode, window, {
-      targetBounds,
-    });
     return;
   }
 
@@ -188,24 +161,11 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
 
     if (!didLogFirstFrame) {
       didLogFirstFrame = true;
-      logOverlayBounds('animate:first-frame', mode, window, {
-        linearProgress,
-        sizeProgress,
-        nextBounds,
-        targetBounds,
-      });
     }
 
     if (linearProgress >= 1) {
       applyWindowBounds(window, targetBounds, {
         preserveY: animation.lockTopEdge,
-      });
-      logOverlayBounds('animate:end', mode, window, {
-        linearProgress,
-        sizeProgress,
-        nextBounds,
-        targetBounds,
-        finalBounds: window.getBounds(),
       });
       clearWindowAnimation(window);
     }

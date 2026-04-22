@@ -18,7 +18,7 @@ export const sourceErrorSchema = z.object({
 export const sourceStateSchema = z.object({
   id: z.string(),
   name: z.string(),
-  type: z.enum(['json', 'rss']),
+  type: z.literal('json'),
   icon: z.string().optional(),
   status: z.enum(['idle', 'loading', 'ready', 'error']),
   summary: z.object({
