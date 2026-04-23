@@ -64,6 +64,7 @@ class PanelBridgeCallback {
 @property(nonatomic, assign) BOOL bridgeReady;
 @property(nonatomic, assign) BOOL pointerInside;
 @property(nonatomic, copy) NSString* currentURL;
+@property(nonatomic, copy) NSString* currentCursorStyle;
 @property(nonatomic, assign) PanelBridgeCallback* callback;
 @end
 
@@ -84,6 +85,9 @@ class PanelBridgeCallback {
   [_currentURL release];
   _currentURL = nil;
 
+  [_currentCursorStyle release];
+  _currentCursorStyle = nil;
+
   [super dealloc];
 }
 @end
@@ -92,6 +96,18 @@ class PanelBridgeCallback {
 @property(nonatomic, assign) OverlayPanelRecord* record;
 - (void)syncPointerState;
 @end
+
+@interface OverlayWebView : WKWebView
+@property(nonatomic, assign) OverlayPanelRecord* record;
+@end
+
+@interface OverlayPanel : NSPanel
+@end
+
+static void ApplyCursorStyle(OverlayPanelRecord* record, NSString* cursorStyle);
+static NSCursor* CursorForStyle(NSString* cursorStyle);
+static void RefreshCursorForRecord(OverlayPanelRecord* record);
+static void ScheduleCursorRefreshForRecord(OverlayPanelRecord* record);
 
 static const CGFloat kCompactIslandWidth = 480.0;
 static const CGFloat kExpandedIslandWidth = 600.0;
@@ -256,6 +272,12 @@ static const CGFloat kCompactBottomDepth = 32.0 * 0.3125;
 
   const BOOL inside = [self currentMouseIsInsideVisibleShape];
   [self.record.panel setIgnoresMouseEvents:inside ? NO : YES];
+  if (inside && ![self.record.panel isKeyWindow]) {
+    [self.record.panel makeKeyWindow];
+  }
+  if (!inside) {
+    ApplyCursorStyle(self.record, @"default");
+  }
 
   if (self.record.callback == nullptr || self.record.pointerInside == inside) {
     self.record.pointerInside = inside;
@@ -272,16 +294,135 @@ static const CGFloat kCompactBottomDepth = 32.0 * 0.3125;
 
 - (void)mouseEntered:(NSEvent*)event {
   [self syncPointerState];
+  ScheduleCursorRefreshForRecord(self.record);
 }
 
 - (void)mouseExited:(NSEvent*)event {
   [self syncPointerState];
+  ScheduleCursorRefreshForRecord(self.record);
 }
+
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+  return YES;
+}
+@end
+
+@implementation OverlayWebView
+
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+  return YES;
+}
+
+- (void)resetCursorRects {
+  [super resetCursorRects];
+
+  NSString* cursorStyle = self.record != nil ? self.record.currentCursorStyle : @"default";
+  [self addCursorRect:self.bounds cursor:CursorForStyle(cursorStyle)];
+}
+
+- (void)cursorUpdate:(NSEvent*)event {
+  NSString* cursorStyle = self.record != nil ? self.record.currentCursorStyle : @"default";
+  [CursorForStyle(cursorStyle) set];
+}
+
+@end
+
+@implementation OverlayPanel
+
+- (BOOL)canBecomeKeyWindow {
+  return YES;
+}
+
+- (BOOL)canBecomeMainWindow {
+  return NO;
+}
+
 @end
 
 @interface OverlayBridgeScriptHandler : NSObject <WKScriptMessageHandler, WKNavigationDelegate>
 @property(nonatomic, assign) OverlayPanelRecord* record;
 @end
+
+static NSCursor* CursorForStyle(NSString* cursorStyle) {
+  if (cursorStyle == nil) {
+    return [NSCursor arrowCursor];
+  }
+
+  NSString* normalized = [[cursorStyle lowercaseString] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+
+  if ([normalized isEqualToString:@"pointer"]) {
+    return [NSCursor pointingHandCursor];
+  }
+
+  if (
+    [normalized isEqualToString:@"text"]
+    || [normalized isEqualToString:@"vertical-text"]
+  ) {
+    return [NSCursor IBeamCursor];
+  }
+
+  if (
+    [normalized isEqualToString:@"not-allowed"]
+    || [normalized isEqualToString:@"no-drop"]
+  ) {
+    return [NSCursor operationNotAllowedCursor];
+  }
+
+  if ([normalized isEqualToString:@"crosshair"]) {
+    return [NSCursor crosshairCursor];
+  }
+
+  if ([normalized isEqualToString:@"grab"]) {
+    return [NSCursor openHandCursor];
+  }
+
+  if ([normalized isEqualToString:@"grabbing"]) {
+    return [NSCursor closedHandCursor];
+  }
+
+  return [NSCursor arrowCursor];
+}
+
+static void RefreshCursorForRecord(OverlayPanelRecord* record) {
+  if (record == nil) {
+    return;
+  }
+
+  if (!record.pointerInside) {
+    [[NSCursor arrowCursor] set];
+    return;
+  }
+
+  [CursorForStyle(record.currentCursorStyle) set];
+}
+
+static void ScheduleCursorRefreshForRecord(OverlayPanelRecord* record) {
+  if (record == nil) {
+    return;
+  }
+
+  dispatch_async(dispatch_get_main_queue(), ^{
+    RefreshCursorForRecord(record);
+  });
+}
+
+static void ApplyCursorStyle(OverlayPanelRecord* record, NSString* cursorStyle) {
+  if (record == nil || record.panel == nil) {
+    return;
+  }
+
+  NSString* normalized = cursorStyle != nil ? [[cursorStyle lowercaseString] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"default";
+  if (record.currentCursorStyle != nil && [record.currentCursorStyle isEqualToString:normalized]) {
+    return;
+  }
+
+  record.currentCursorStyle = normalized;
+  if ([record.webView isKindOfClass:[OverlayWebView class]]) {
+    OverlayWebView* webView = (OverlayWebView*)record.webView;
+    [[webView window] invalidateCursorRectsForView:webView];
+  }
+  ScheduleCursorRefreshForRecord(record);
+}
 
 @implementation OverlayBridgeScriptHandler
 
@@ -314,6 +455,13 @@ static const CGFloat kCompactBottomDepth = 32.0 * 0.3125;
       NSString* channel = [(NSDictionary*)json objectForKey:@"channel"];
       if ([kind isEqualToString:@"event"] && [channel isEqualToString:@"bridge-ready"]) {
         self.record.bridgeReady = YES;
+      }
+      if ([kind isEqualToString:@"event"] && [channel isEqualToString:@"native:set-cursor"]) {
+        id payload = [(NSDictionary*)json objectForKey:@"payload"];
+        NSString* cursor = [payload isKindOfClass:[NSDictionary class]] ? [(NSDictionary*)payload objectForKey:@"cursor"] : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+          ApplyCursorStyle(self.record, [cursor isKindOfClass:[NSString class]] ? cursor : @"default");
+        });
       }
     }
   }
@@ -493,6 +641,8 @@ NSString* GetBridgeBootstrapScript() {
     window.webkit.messageHandlers.overlayHost.postMessage(JSON.stringify(message));
   };
 
+  let lastCursor = null;
+
   const request = (channel, payload) => {
     const requestId = `req-${nextRequestId++}`;
     postMessage({ kind: 'request', requestId, channel, payload });
@@ -543,6 +693,100 @@ NSString* GetBridgeBootstrapScript() {
     };
   };
 
+  const getCursorTarget = (event) => {
+    if (event && typeof event.clientX === 'number' && typeof event.clientY === 'number') {
+      const pointedElement = document.elementFromPoint(event.clientX, event.clientY);
+      if (pointedElement instanceof Element) {
+        return pointedElement;
+      }
+    }
+
+    if (event?.target instanceof Element) {
+      return event.target;
+    }
+
+    if (event?.target && event.target.parentElement instanceof Element) {
+      return event.target.parentElement;
+    }
+
+    return null;
+  };
+
+  const resolveCursorStyle = (target) => {
+    if (!(target instanceof Element)) {
+      return 'default';
+    }
+
+    const interactiveTarget = target.closest(
+      'button, a[href], label, input:not([type="hidden"]), textarea, select, [role="button"], [data-cursor="pointer"]'
+    );
+
+    if (interactiveTarget instanceof Element) {
+      if (
+        interactiveTarget instanceof HTMLInputElement
+        || interactiveTarget instanceof HTMLTextAreaElement
+      ) {
+        const inputType = interactiveTarget instanceof HTMLInputElement ? interactiveTarget.type : 'textarea';
+        if (
+          inputType === 'text'
+          || inputType === 'search'
+          || inputType === 'email'
+          || inputType === 'url'
+          || inputType === 'password'
+          || inputType === 'number'
+          || inputType === 'tel'
+          || inputType === 'textarea'
+        ) {
+          return 'text';
+        }
+      }
+
+      const interactiveCursor = window.getComputedStyle(interactiveTarget).cursor;
+      if ('disabled' in interactiveTarget && interactiveTarget.disabled) {
+        return interactiveCursor && interactiveCursor !== 'auto' ? interactiveCursor : 'default';
+      }
+
+      return interactiveCursor && interactiveCursor !== 'auto' ? interactiveCursor : 'pointer';
+    }
+
+    const computedCursor = window.getComputedStyle(target).cursor;
+    return computedCursor && computedCursor !== 'auto' ? computedCursor : 'default';
+  };
+
+  const syncNativeCursor = (eventOrTarget) => {
+    const target = eventOrTarget instanceof Element ? eventOrTarget : getCursorTarget(eventOrTarget);
+    const nextCursor = resolveCursorStyle(target);
+
+    if (nextCursor === lastCursor) {
+      return;
+    }
+
+    lastCursor = nextCursor;
+    postMessage({
+      kind: 'event',
+      channel: 'native:set-cursor',
+      payload: {
+        cursor: nextCursor,
+      },
+    });
+  };
+
+  document.addEventListener('mousemove', (event) => {
+    syncNativeCursor(event);
+  }, { capture: true, passive: true });
+
+  document.addEventListener('mouseover', (event) => {
+    syncNativeCursor(event);
+  }, { capture: true, passive: true });
+
+  document.addEventListener('mouseout', (event) => {
+    syncNativeCursor(event);
+  }, { capture: true, passive: true });
+
+  window.addEventListener('blur', () => {
+    syncNativeCursor(null);
+  });
+
   window.api = {
     overlay: {
       getState: () => request('overlay:get-state'),
@@ -551,6 +795,8 @@ NSString* GetBridgeBootstrapScript() {
     agent: {
       getSetup: () => request('agent:get-setup'),
       resolveApproval: (sessionId, decision) => request('agent:resolve-approval', { sessionId, decision }),
+      answerQuestion: (sessionId, response) => request('agent:answer-question', { sessionId, response }),
+      handoffApproval: (sessionId) => request('agent:handoff-approval', sessionId),
     },
     config: {
       reload: () => request('config:reload'),
@@ -561,6 +807,7 @@ NSString* GetBridgeBootstrapScript() {
       jumpToAgentSession: (sessionId) => request('app:jump-to-agent-session', sessionId),
       setOverlayExpanded: (expanded) => request('app:set-overlay-expanded', expanded),
       setExpandedContentHeight: (height) => request('app:set-expanded-content-height', height),
+      setReminderHoldActive: (active) => request('app:set-reminder-hold-active', active),
       subscribeOverlayMode: (listener) => subscribe('app:overlay-mode-changed', listener),
     },
   };
@@ -586,7 +833,8 @@ WKWebView* CreateWebView(OverlayPanelRecord* record, NSRect frame) {
   configuration.preferences.javaScriptCanOpenWindowsAutomatically = NO;
   configuration.defaultWebpagePreferences.allowsContentJavaScript = YES;
 
-  WKWebView* webView = [[[WKWebView alloc] initWithFrame:frame configuration:configuration] autorelease];
+  OverlayWebView* webView = [[[OverlayWebView alloc] initWithFrame:frame configuration:configuration] autorelease];
+  webView.record = record;
   webView.navigationDelegate = handler;
   [webView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
   [webView setHidden:NO];
@@ -670,10 +918,10 @@ Napi::Value CreatePanel(const Napi::CallbackInfo& info) {
   RunOnMainQueueSync(^{
     const NSRect initialFrame = NSMakeRect(0, 0, 400, 32);
     const NSUInteger styleMask = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel;
-    panel = [[[NSPanel alloc] initWithContentRect:initialFrame
-                                        styleMask:styleMask
-                                          backing:NSBackingStoreBuffered
-                                            defer:NO] autorelease];
+    panel = [[[OverlayPanel alloc] initWithContentRect:initialFrame
+                                             styleMask:styleMask
+                                               backing:NSBackingStoreBuffered
+                                                 defer:NO] autorelease];
 
     if (panel == nil) {
       return;
@@ -695,12 +943,13 @@ Napi::Value CreatePanel(const Napi::CallbackInfo& info) {
     record.bridgeReady = NO;
     record.pointerInside = NO;
     record.currentURL = nil;
+    record.currentCursorStyle = @"default";
     record.webView = CreateWebView(record, initialFrame);
     [containerView addSubview:record.webView];
 
     [panel setContentView:containerView];
     [panel setFloatingPanel:YES];
-    [panel setBecomesKeyOnlyIfNeeded:YES];
+    [panel setBecomesKeyOnlyIfNeeded:NO];
     [panel setLevel:NSScreenSaverWindowLevel];
     [panel setOpaque:NO];
     [panel setHasShadow:NO];
@@ -712,6 +961,7 @@ Napi::Value CreatePanel(const Napi::CallbackInfo& info) {
                                   NSWindowCollectionBehaviorFullScreenAuxiliary |
                                   NSWindowCollectionBehaviorStationary |
                                   NSWindowCollectionBehaviorIgnoresCycle)];
+    [panel setAcceptsMouseMovedEvents:YES];
     [panel setHidesOnDeactivate:NO];
     [panel setMovable:NO];
     [panel setMovableByWindowBackground:NO];
@@ -733,11 +983,13 @@ Napi::Value CreatePanel(const Napi::CallbackInfo& info) {
     __unsafe_unretained OverlayTrackingView* trackingView = containerView;
     record.localMouseMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:monitorMask handler:^NSEvent*(NSEvent* event) {
       [trackingView syncPointerState];
+      ScheduleCursorRefreshForRecord(trackingView.record);
       return event;
     }];
     record.globalMouseMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:monitorMask handler:^(NSEvent* event) {
       RunOnMainQueueSync(^{
         [trackingView syncPointerState];
+        ScheduleCursorRefreshForRecord(trackingView.record);
       });
     }];
     [containerView syncPointerState];
@@ -1001,6 +1253,33 @@ Napi::Value GetPanelDiagnostics(const Napi::CallbackInfo& info) {
   return BuildPanelDiagnostics(env, panel, displayPtr);
 }
 
+Napi::Value SyncPanelPointerState(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsBuffer()) {
+    Napi::TypeError::New(env, "syncPanelPointerState requires a panel handle buffer.").ThrowAsJavaScriptException();
+    return Napi::Boolean::New(env, false);
+  }
+
+  NSPanel* panel = GetPanelFromHandle(info[0].As<Napi::Buffer<char>>());
+  if (panel == nil) {
+    return Napi::Boolean::New(env, false);
+  }
+
+  __block bool didSync = false;
+  RunOnMainQueueSync(^{
+    OverlayPanelRecord* record = GetPanelRecord(panel);
+    if (record == nil || record.containerView == nil) {
+      return;
+    }
+
+    [((OverlayTrackingView*)record.containerView) syncPointerState];
+    ScheduleCursorRefreshForRecord(record);
+    didSync = true;
+  });
+
+  return Napi::Boolean::New(env, didSync);
+}
+
 Napi::Value OrderPanelFrontRegardless(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (info.Length() < 1 || !info[0].IsBuffer()) {
@@ -1060,6 +1339,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("setPanelFrame", Napi::Function::New(env, SetPanelFrame));
   exports.Set("getPanelFrame", Napi::Function::New(env, GetPanelFrame));
   exports.Set("getPanelDiagnostics", Napi::Function::New(env, GetPanelDiagnostics));
+  exports.Set("syncPanelPointerState", Napi::Function::New(env, SyncPanelPointerState));
   exports.Set("orderPanelFrontRegardless", Napi::Function::New(env, OrderPanelFrontRegardless));
   exports.Set("orderPanelOut", Napi::Function::New(env, OrderPanelOut));
   return exports;

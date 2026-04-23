@@ -11,6 +11,8 @@ import path from 'node:path';
 
 import {
   AGENT_TOOL_LABELS,
+  codexInstallVariantIdSchema,
+  type CodexInstallVariantId,
   type AgentHookInstallStatus,
   type AgentTool,
 } from '../../../shared/types/agent-hook';
@@ -31,10 +33,12 @@ const INSTALLABLE_AGENT_SOURCES: AgentTool[] = [
   'gemini',
   'kimi',
 ];
+const DEFAULT_CODEX_INSTALL_VARIANT: CodexInstallVariantId = 'standard';
 
 type CodexManifest = {
   hookCommand: string;
   enabledCodexHooksFeature: boolean;
+  variantId: CodexInstallVariantId;
   installedAt: string;
 };
 
@@ -106,12 +110,42 @@ const INSTALL_DIRECTORIES: Record<AgentTool, InstallDirectoryDescriptor> = {
   },
 };
 
-const CODEX_HOOK_SPECS: HookGroupSpec[] = [
-  { event: 'SessionStart', matcher: 'startup|resume', timeoutSeconds: CODEX_HOOK_TIMEOUT_SECONDS },
-  { event: 'UserPromptSubmit', timeoutSeconds: CODEX_HOOK_TIMEOUT_SECONDS },
-  { event: 'PreToolUse', timeoutSeconds: CODEX_PERMISSION_REQUEST_TIMEOUT_SECONDS },
-  { event: 'Stop', timeoutSeconds: CODEX_HOOK_TIMEOUT_SECONDS },
+const CODEX_SESSION_START_HOOK_SPEC: HookGroupSpec = {
+  event: 'SessionStart',
+  matcher: 'startup|resume',
+  timeoutSeconds: CODEX_HOOK_TIMEOUT_SECONDS,
+};
+
+const CODEX_USER_PROMPT_SUBMIT_HOOK_SPEC: HookGroupSpec = {
+  event: 'UserPromptSubmit',
+  timeoutSeconds: CODEX_HOOK_TIMEOUT_SECONDS,
+};
+
+const CODEX_STOP_HOOK_SPEC: HookGroupSpec = {
+  event: 'Stop',
+  timeoutSeconds: CODEX_HOOK_TIMEOUT_SECONDS,
+};
+
+const CODEX_BASE_HOOK_SPECS: HookGroupSpec[] = [
+  CODEX_SESSION_START_HOOK_SPEC,
+  CODEX_USER_PROMPT_SUBMIT_HOOK_SPEC,
+  CODEX_STOP_HOOK_SPEC,
 ];
+
+const CODEX_PRE_TOOL_USE_HOOK_SPEC: HookGroupSpec = {
+  event: 'PreToolUse',
+  timeoutSeconds: CODEX_PERMISSION_REQUEST_TIMEOUT_SECONDS,
+};
+
+const CODEX_HOOK_SPECS: HookGroupSpec[] = [
+  CODEX_SESSION_START_HOOK_SPEC,
+  CODEX_USER_PROMPT_SUBMIT_HOOK_SPEC,
+  CODEX_PRE_TOOL_USE_HOOK_SPEC,
+  CODEX_STOP_HOOK_SPEC,
+];
+
+const CODEX_HOOK_SPECS_WITHOUT_PRE_TOOL_USE: HookGroupSpec[] = [...CODEX_BASE_HOOK_SPECS];
+const CODEX_MANAGED_EVENT_NAMES = CODEX_HOOK_SPECS.map((spec) => spec.event);
 
 const CLAUDE_COMPATIBLE_HOOK_SPECS: HookGroupSpec[] = [
   { event: 'SessionStart', timeoutSeconds: CLAUDE_HOOK_TIMEOUT_SECONDS },
@@ -251,6 +285,9 @@ function readCodexManifest(manifestPath: string): CodexManifest | null {
   return {
     hookCommand: manifest.hookCommand,
     enabledCodexHooksFeature: manifest.enabledCodexHooksFeature === true,
+    variantId: codexInstallVariantIdSchema.safeParse(manifest.variantId).success
+      ? codexInstallVariantIdSchema.parse(manifest.variantId)
+      : DEFAULT_CODEX_INSTALL_VARIANT,
     installedAt: typeof manifest.installedAt === 'string' ? manifest.installedAt : nowIsoString(),
   };
 }
@@ -262,10 +299,16 @@ function writeHookManifest(manifestPath: string, hookCommand: string): void {
   });
 }
 
-function writeCodexManifest(manifestPath: string, hookCommand: string, enabledCodexHooksFeature: boolean): void {
+function writeCodexManifest(
+  manifestPath: string,
+  hookCommand: string,
+  enabledCodexHooksFeature: boolean,
+  variantId: CodexInstallVariantId
+): void {
   writeJsonFile(manifestPath, {
     hookCommand,
     enabledCodexHooksFeature,
+    variantId,
     installedAt: nowIsoString(),
   });
 }
@@ -506,7 +549,13 @@ function disableCodexFeatureIfManaged(contents: string): string {
   return nextLines.join('\n');
 }
 
-function installCodex(bridgeScriptPath: string): void {
+function codexHookSpecsForVariant(variantId: CodexInstallVariantId): HookGroupSpec[] {
+  return variantId === 'no-pretooluse'
+    ? CODEX_HOOK_SPECS_WITHOUT_PRE_TOOL_USE
+    : CODEX_HOOK_SPECS;
+}
+
+function installCodex(bridgeScriptPath: string, variantId: CodexInstallVariantId = DEFAULT_CODEX_INSTALL_VARIANT): void {
   const descriptor = INSTALL_DIRECTORIES.codex;
   ensureDirectory(descriptor.directoryPath);
 
@@ -518,7 +567,7 @@ function installCodex(bridgeScriptPath: string): void {
   const existingConfig = readUtf8IfExists(configPath) ?? '';
   const existingHooks = readJsonObjectIfExists(hooksPath) ?? {};
   const featureMutation = enableCodexFeature(existingConfig);
-  const nextHooks = installManagedHookGroups(existingHooks, 'codex', managedCommand, CODEX_HOOK_SPECS);
+  const nextHooks = installManagedHookGroups(existingHooks, 'codex', managedCommand, codexHookSpecsForVariant(variantId));
 
   if (featureMutation.contents !== existingConfig) {
     backupFileIfExists(configPath);
@@ -530,7 +579,7 @@ function installCodex(bridgeScriptPath: string): void {
     writeJsonFile(hooksPath, nextHooks);
   }
 
-  writeCodexManifest(manifestPath, managedCommand, featureMutation.enabledByInstaller);
+  writeCodexManifest(manifestPath, managedCommand, featureMutation.enabledByInstaller, variantId);
 }
 
 function uninstallCodex(): void {
@@ -542,7 +591,7 @@ function uninstallCodex(): void {
   const existingHooks = readJsonObjectIfExists(hooksPath);
 
   if (existingHooks) {
-    const uninstallResult = uninstallManagedHookGroups(existingHooks, 'codex', manifest?.hookCommand ?? null, CODEX_HOOK_SPECS.map((spec) => spec.event));
+    const uninstallResult = uninstallManagedHookGroups(existingHooks, 'codex', manifest?.hookCommand ?? null, CODEX_MANAGED_EVENT_NAMES);
     if (JSON.stringify(uninstallResult.rootObject) !== JSON.stringify(existingHooks)) {
       backupFileIfExists(hooksPath);
       if (uninstallResult.rootObject) {
@@ -913,19 +962,35 @@ function codexStatus(bridgeScriptPath: string): AgentHookInstallStatus {
   const configPath = path.join(descriptor.directoryPath, 'config.toml');
   const hooksPath = path.join(descriptor.directoryPath, 'hooks.json');
   const manifestPath = codexManifestPath(descriptor.directoryPath);
-  const managedCommand = readCodexManifest(manifestPath)?.hookCommand ?? buildHookCommand(bridgeScriptPath, 'codex');
+  const manifest = readCodexManifest(manifestPath);
+  const managedCommand = manifest?.hookCommand ?? buildHookCommand(bridgeScriptPath, 'codex');
   const featureEnabled = codexFeatureState(readUtf8IfExists(configPath) ?? '');
   const hooksRoot = readJsonObjectIfExists(hooksPath);
-  const uninstallResult = hooksRoot
-    ? uninstallManagedHookGroups(hooksRoot, 'codex', managedCommand, CODEX_HOOK_SPECS.map((spec) => spec.event))
-    : { rootObject: null, managedHooksPresent: false };
+  const hooksObject = normalizeRecord(hooksRoot?.hooks);
+  const hasManagedEvent = (eventName: string): boolean => hasManagedHookGroups(
+    normalizeObjectArray(hooksObject[eventName]),
+    'codex',
+    managedCommand
+  );
+  const hasManagedBaseHooks = CODEX_BASE_HOOK_SPECS.every((spec) => hasManagedEvent(spec.event));
+  const hasPreToolUseHook = hasManagedEvent(CODEX_PRE_TOOL_USE_HOOK_SPEC.event);
+  const hasAnyManagedHooks = CODEX_MANAGED_EVENT_NAMES.some((eventName) => hasManagedEvent(eventName));
 
-  if (featureEnabled && uninstallResult.managedHooksPresent) {
-    return buildInstalledStatus('codex', '已自动安装', true);
+  if (featureEnabled && hasManagedBaseHooks) {
+    return buildInstalledStatus(
+      'codex',
+      hasPreToolUseHook ? '已自动安装（含 PreToolUse）' : '已自动安装（不含 PreToolUse）',
+      true
+    );
   }
 
-  if (featureEnabled || uninstallResult.managedHooksPresent) {
-    return buildInstalledStatus('codex', '部分已安装，建议重新安装一次', false, true);
+  if (featureEnabled || hasAnyManagedHooks) {
+    const variantSuffix = manifest?.variantId === 'no-pretooluse'
+      ? '（当前记录为不含 PreToolUse）'
+      : manifest?.variantId === 'standard'
+        ? '（当前记录为含 PreToolUse）'
+        : '';
+    return buildInstalledStatus('codex', `部分已安装，建议重新安装一次${variantSuffix}`, false, true);
   }
 
   return buildInstalledStatus('codex', '未安装', false);
@@ -1047,10 +1112,10 @@ export class AgentHookInstallationManager {
     return INSTALLABLE_AGENT_SOURCES.map((source) => statusForSource(source, this.bridgeScriptPath));
   }
 
-  install(source: AgentTool): AgentHookInstallStatus[] {
+  install(source: AgentTool, options?: { variantId?: CodexInstallVariantId }): AgentHookInstallStatus[] {
     switch (source) {
       case 'codex':
-        installCodex(this.bridgeScriptPath);
+        installCodex(this.bridgeScriptPath, options?.variantId);
         break;
       case 'claude':
       case 'qoder':

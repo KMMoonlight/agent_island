@@ -1,5 +1,11 @@
 import { APP_CONFIG } from '../../../shared/constants/config';
-import type { AgentApprovalRequest, AgentOverlayState, AgentReminder, AgentSession } from '../../../shared/types/agent-hook';
+import type {
+  AgentApprovalRequest,
+  AgentOverlayState,
+  AgentQuestionPrompt,
+  AgentReminder,
+  AgentSession,
+} from '../../../shared/types/agent-hook';
 import type { AppConfig } from '../../../shared/types/config';
 import type { AppStatus, OverlayHostKind } from '../../../shared/types/ipc';
 import type { OverlayState, SourceState } from '../../../shared/types/source-data';
@@ -19,10 +25,25 @@ function cloneApprovalRequest(approvalRequest: AgentApprovalRequest | undefined)
   };
 }
 
+function cloneQuestionPrompt(questionPrompt: AgentQuestionPrompt | undefined): AgentQuestionPrompt | undefined {
+  if (!questionPrompt) {
+    return undefined;
+  }
+
+  return {
+    ...questionPrompt,
+    questions: questionPrompt.questions.map((question) => ({
+      ...question,
+      options: question.options.map((option) => ({ ...option })),
+    })),
+  };
+}
+
 function cloneAgentSession(session: AgentSession): AgentSession {
   return {
     ...session,
     approvalRequest: cloneApprovalRequest(session.approvalRequest),
+    questionPrompt: cloneQuestionPrompt(session.questionPrompt),
     jumpTarget: session.jumpTarget ? { ...session.jumpTarget } : undefined,
   };
 }

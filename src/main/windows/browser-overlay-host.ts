@@ -250,7 +250,16 @@ export function createBrowserOverlayHost(
         return;
       }
 
-      expandedContentHeight = Math.max(APP_CONFIG.window.compactHeight, Math.min(APP_CONFIG.window.expandedHeight, Math.round(height)));
+      const normalizedHeight = Math.max(
+        APP_CONFIG.window.compactHeight,
+        Math.min(APP_CONFIG.window.expandedHeight, Math.round(height))
+      );
+
+      if (expandedContentHeight === normalizedHeight) {
+        return;
+      }
+
+      expandedContentHeight = normalizedHeight;
 
       if (currentMode === 'expanded') {
         animateOverlayWindow(window, getHostOverlayBounds('expanded', expandedContentHeight), 'expanded');

@@ -15,6 +15,7 @@
 .agent-feed {
   display: flex;
   flex: 0 1 auto;
+  align-items: flex-start;
   align-self: flex-start;
   min-height: 0;
   max-height: 100%;
@@ -90,9 +91,9 @@
 
 .agent-card {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
   align-content: start;
-  align-self: stretch;
+  align-self: flex-start;
   flex: 0 1 auto;
   min-height: 0;
   height: auto;
@@ -112,7 +113,7 @@
 
 .agent-card__main {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
   gap: 10px;
   min-height: 0;
   height: auto;
@@ -126,6 +127,11 @@
   text-align: left;
   pointer-events: auto;
   overflow: hidden;
+}
+
+button.agent-card__main,
+button.agent-card__main:hover {
+  cursor: pointer !important;
 }
 
 .agent-card--attention {
@@ -272,7 +278,14 @@
 .agent-card__body {
   overflow-y: auto;
   padding-right: 6px;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.agent-card__body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .agent-card__footer {
@@ -296,23 +309,35 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.agent-card__actions--1 {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .agent-card__action {
-  min-height: 38px;
+  min-height: 32px;
   width: 100%;
   min-width: 0;
-  padding: 8px 12px;
-  border-radius: 12px;
+  padding: 6px 10px;
+  border-radius: 10px;
   border: 0;
-  font-size: 0.72rem;
+  cursor: pointer !important;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: -0.01em;
-  line-height: 1.25;
+  line-height: 1.2;
   text-wrap: balance;
   transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
   pointer-events: auto;
 }
 
+.agent-card__action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+}
+
 .agent-card__action:hover {
+  cursor: pointer !important;
   transform: translateY(-1px);
 }
 
@@ -351,6 +376,141 @@
   letter-spacing: -0.01em;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.agent-question-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: hsl(36 28% 7% / 0.94);
+  border: 1px solid hsl(34 48% 28% / 0.3);
+}
+
+.agent-card__approval-preview {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.agent-card__approval-command {
+  margin: 0;
+  color: hsl(var(--color-ink) / 0.92);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family:
+    'SFMono-Regular',
+    ui-monospace,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    monospace;
+}
+
+.agent-card__approval-path {
+  margin: 0;
+  color: hsl(var(--color-muted) / 0.72);
+  font-size: 0.7rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-question-card__section,
+.agent-question-card__options {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-question-card__header {
+  margin: 0;
+  color: hsl(var(--color-muted) / 0.72);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agent-question-card__question {
+  margin: 0;
+  color: hsl(var(--color-ink) / 0.94);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.agent-question-card__option {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: hsl(0 0% 100% / 0.04);
+  cursor: pointer;
+}
+
+.agent-question-card__option--selected {
+  border: 1px solid hsl(50 88% 62% / 0.34);
+  background: hsl(50 88% 62% / 0.08);
+}
+
+.agent-question-card__option input[type='radio'],
+.agent-question-card__option input[type='checkbox'] {
+  margin: 0;
+}
+
+.agent-question-card__option-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.agent-question-card__option-label {
+  color: hsl(var(--color-ink) / 0.94);
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.agent-question-card__option-description {
+  color: hsl(var(--color-muted) / 0.8);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.agent-question-card__input {
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 1px solid hsl(0 0% 100% / 0.08);
+  border-radius: 12px;
+  background: hsl(0 0% 100% / 0.04);
+  color: hsl(var(--color-ink) / 0.92);
+  font: inherit;
+  resize: vertical;
+}
+
+.agent-question-card__input,
+.agent-question-card__input:hover,
+.agent-question-card__option input[type='radio'],
+.agent-question-card__option input[type='checkbox'] {
+  cursor: pointer;
+}
+
+.agent-question-card__input[type='text'],
+.agent-question-card__input[type='search'],
+textarea.agent-question-card__input,
+textarea.agent-question-card__input:hover {
+  cursor: text;
+}
+
+.agent-question-card__input--inline {
+  min-height: 0;
 }
 
 .agent-card__detail,

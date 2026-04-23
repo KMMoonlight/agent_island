@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { APP_CONFIG } from '@shared/constants/config';
-import type { AgentApprovalDecision, AgentReminder } from '@shared/types/agent-hook';
-import type { OverlayHostKind } from '@shared/types/ipc';
+import type { AgentApprovalDecision, AgentQuestionResponse, AgentReminder } from '@shared/types/agent-hook';
+import type { OverlayExpandOptions, OverlayHostKind } from '@shared/types/ipc';
 import type { SourceState } from '@shared/types/source-data';
 
 import { OverlayProvider } from './features/overlay/context/OverlayContext';
 import { useOverlayContext } from './features/overlay/context/overlay-context';
-import { IslandCompact, PixelCompactIcon, type PixelCompactIconVariant } from './features/overlay/components/IslandCompact';
+import {
+  IslandCompact,
+  PixelCompactIcon,
+  getPlaceholderIconVariant,
+  type PixelCompactIconVariant,
+} from './features/overlay/components/IslandCompact';
 import { IslandExpanded } from './features/overlay/components/IslandExpanded';
 
 type OverlayPresentationMode = 'compact' | 'expanding' | 'expanded' | 'collapsing';
@@ -167,7 +172,7 @@ function IslandShapeSurface({ visualSize }: { visualSize: IslandVisualSize }): J
 function PlaceholderState({
   message,
   iconOnly = false,
-  iconVariant = 'info',
+  iconVariant = getPlaceholderIconVariant('default'),
 }: {
   message: string;
   iconOnly?: boolean;
@@ -193,11 +198,11 @@ function getStableCompactContent(
   activeReminder: AgentReminder | null
 ): JSX.Element {
   if (isLoading && !state) {
-    return <PlaceholderState message="Loading configured sources" iconVariant="sync" />;
+    return <PlaceholderState message="Loading configured sources" iconVariant={getPlaceholderIconVariant('loading')} />;
   }
 
   if (!isLoading && loadError) {
-    return <PlaceholderState message={loadError} iconVariant="warn" />;
+    return <PlaceholderState message={loadError} iconVariant={getPlaceholderIconVariant('error')} />;
   }
 
   if (!isLoading && !loadError && (activeReminder || activeSource)) {
@@ -208,7 +213,7 @@ function getStableCompactContent(
     );
   }
 
-  return <PlaceholderState message="No sources configured" iconOnly iconVariant="info" />;
+  return <PlaceholderState message="No sources configured" iconOnly iconVariant={getPlaceholderIconVariant('default')} />;
 }
 
 function shouldShowExpandedBody(
@@ -223,7 +228,8 @@ function getExpandedBody(
   state: ReturnType<typeof useOverlayContext>['state'],
   handleOpenTarget: (targetUrl: string | undefined) => Promise<void>,
   handleJumpToSession: (sessionId: string | undefined) => Promise<void>,
-  handleResolveApproval: (sessionId: string | undefined, decision: AgentApprovalDecision) => Promise<void>
+  handleResolveApproval: (sessionId: string | undefined, decision: AgentApprovalDecision) => Promise<void>,
+  handleAnswerQuestion: (sessionId: string | undefined, response: AgentQuestionResponse) => Promise<void>
 ): JSX.Element | null {
   if (!state) {
     return null;
@@ -235,6 +241,7 @@ function getExpandedBody(
       onOpenTarget={handleOpenTarget}
       onJumpToSession={handleJumpToSession}
       onResolveApproval={handleResolveApproval}
+      onAnswerQuestion={handleAnswerQuestion}
     />
   );
 }
@@ -250,6 +257,8 @@ function clearTimerRef(timerRef: { current: number | null }): void {
   window.clearTimeout(timer);
   timerRef.current = null;
 }
+
+const REMINDER_HOLD_GRACE_MS = 1_600;
 
 function useActiveSource(sources: SourceState[], rotationIntervalMs: number): SourceState | null {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -280,14 +289,19 @@ function OverlayApp(): JSX.Element {
   const [overlayHostKind, setOverlayHostKind] = useState<OverlayHostKind | null>(null);
   const [presentationMode, setPresentationMode] = useState<OverlayPresentationMode>('compact');
   const [isShellAnimating, setIsShellAnimating] = useState(false);
+  const [heldReminder, setHeldReminder] = useState<AgentReminder | null>(null);
   const expandTimerRef = useRef<number | null>(null);
   const collapseTimerRef = useRef<number | null>(null);
   const shellAnimationTimerRef = useRef<number | null>(null);
   const reminderCollapseTimerRef = useRef<number | null>(null);
+  const reminderHoldReleaseTimerRef = useRef<number | null>(null);
   const reminderExpandedRef = useRef(false);
+  const reminderHoldActiveRef = useRef(false);
   const hoverExpandLockedRef = useRef(false);
   const suppressedReminderIdRef = useRef<string | null>(null);
   const lastReminderIdRef = useRef<string | null>(null);
+  const lastReminderSnapshotRef = useRef<AgentReminder | null>(null);
+  const activeReminderRef = useRef<AgentReminder | null>(null);
   const islandRef = useRef<HTMLElement | null>(null);
   const expandedMeasureRef = useRef<HTMLDivElement | null>(null);
   const lastMeasuredExpandedHeightRef = useRef<number | null>(null);
@@ -298,13 +312,36 @@ function OverlayApp(): JSX.Element {
 
   const sources = state?.sources ?? [];
   const rotationIntervalMs = state?.rotationIntervalMs ?? 10_000;
-  const activeReminder = state?.agent.activeReminder ?? null;
+  const stateReminder = state?.agent.activeReminder ?? null;
+  const activeReminder = reminderHoldActiveRef.current && heldReminder
+    ? heldReminder
+    : stateReminder ?? heldReminder;
   const visibleReminder = activeReminder && suppressedReminderIdRef.current !== activeReminder.id
     ? activeReminder
     : null;
+  const hasHoverHoldReminder = Boolean(
+    visibleReminder
+    && visibleReminder.shouldExpand
+    && visibleReminder.expiresAtMs !== null
+  );
+  const shouldKeepSuppressedReminderVisible = Boolean(
+    activeReminder
+    && suppressedReminderIdRef.current === activeReminder.id
+    && presentationMode === 'collapsing'
+  );
+  const keepsReminderPinned = Boolean(
+    visibleReminder
+    && visibleReminder.shouldExpand
+    && (reminderHoldActiveRef.current || visibleReminder.expiresAtMs === null || visibleReminder.expiresAtMs > Date.now())
+  );
   const activeSource = useActiveSource(sources, rotationIntervalMs);
   const displayState = useMemo(() => {
-    if (!state || !activeReminder || visibleReminder) {
+    if (!state) {
+      return state;
+    }
+
+    const nextReminder = visibleReminder || shouldKeepSuppressedReminderVisible ? activeReminder : null;
+    if (state.agent.activeReminder?.id === nextReminder?.id) {
       return state;
     }
 
@@ -312,10 +349,26 @@ function OverlayApp(): JSX.Element {
       ...state,
       agent: {
         ...state.agent,
-        activeReminder: null,
+        activeReminder: nextReminder,
       },
     };
-  }, [activeReminder, state, visibleReminder]);
+  }, [activeReminder, shouldKeepSuppressedReminderVisible, state, visibleReminder]);
+  const usesRendererHover = overlayHostKind !== 'native-macos-panel';
+
+  const setReminderHoldActive = useCallback((active: boolean): void => {
+    if (reminderHoldActiveRef.current === active) {
+      return;
+    }
+
+    reminderHoldActiveRef.current = active;
+    void window.api.app.setReminderHoldActive(active).catch(() => {
+      // Ignore transient IPC failures so reminder rendering remains responsive.
+    });
+  }, []);
+
+  const setHoverExpandLocked = useCallback((locked: boolean): void => {
+    hoverExpandLockedRef.current = usesRendererHover ? locked : false;
+  }, [usesRendererHover]);
 
   const handleOpenTarget = async (targetUrl: string | undefined): Promise<void> => {
     if (!targetUrl) {
@@ -330,21 +383,22 @@ function OverlayApp(): JSX.Element {
       return;
     }
 
-    const session = state?.agent.sessions.find((item) => item.id === sessionId);
-    const shouldHandoffToCodex = session?.tool === 'codex' && session.phase === 'needs-approval';
-
-    if (shouldHandoffToCodex) {
-      await window.api.agent.handoffApproval(sessionId).catch(() => false);
-    }
-
+    const jumpRequest = window.api.app.jumpToAgentSession(sessionId).catch(() => false);
+    const shouldDismissActiveReminder = activeReminder?.sessionId === sessionId;
     if (activeReminder) {
       suppressedReminderIdRef.current = activeReminder.id;
     }
-    hoverExpandLockedRef.current = true;
+    setReminderHoldActive(false);
+    setHeldReminder(null);
+    setHoverExpandLocked(true);
     clearTimerRef(expandTimerRef);
     clearTimerRef(collapseTimerRef);
-    requestWindowMode(false);
-    await window.api.app.jumpToAgentSession(sessionId);
+    clearTimerRef(reminderHoldReleaseTimerRef);
+    requestWindowMode(false, { suppressHoverUntilLeave: false });
+    if (shouldDismissActiveReminder) {
+      void window.api.agent.dismissReminder(sessionId).catch(() => false);
+    }
+    await jumpRequest;
   };
 
   const handleResolveApproval = async (sessionId: string | undefined, decision: AgentApprovalDecision): Promise<void> => {
@@ -352,13 +406,7 @@ function OverlayApp(): JSX.Element {
       return;
     }
 
-    const session = state?.agent.sessions.find((item) => item.id === sessionId);
-    const shouldHandoffToCodex = decision !== 'deny'
-      && session?.tool === 'codex'
-      && session.lastEventName === 'PreToolUse';
-    const didResolve = shouldHandoffToCodex
-      ? await window.api.agent.handoffApproval(sessionId).catch(() => false)
-      : await window.api.agent.resolveApproval(sessionId, decision).catch(() => false);
+    const didResolve = await window.api.agent.resolveApproval(sessionId, decision).catch(() => false);
 
     if (!didResolve) {
       return;
@@ -368,21 +416,98 @@ function OverlayApp(): JSX.Element {
       suppressedReminderIdRef.current = activeReminder.id;
     }
 
-    hoverExpandLockedRef.current = true;
+    setReminderHoldActive(false);
+    setHeldReminder(null);
+    setHoverExpandLocked(true);
     clearTimerRef(expandTimerRef);
     clearTimerRef(collapseTimerRef);
     clearTimerRef(reminderCollapseTimerRef);
-    requestWindowMode(false);
-
-    if (shouldHandoffToCodex) {
-      await window.api.app.jumpToAgentSession(sessionId);
-    }
+    clearTimerRef(reminderHoldReleaseTimerRef);
+    requestWindowMode(false, { suppressHoverUntilLeave: false });
   };
+
+  const handleAnswerQuestion = async (sessionId: string | undefined, response: AgentQuestionResponse): Promise<void> => {
+    if (!sessionId) {
+      return;
+    }
+
+    const didAnswer = await window.api.agent.answerQuestion(sessionId, response).catch(() => false);
+
+    if (!didAnswer) {
+      return;
+    }
+
+    if (activeReminder) {
+      suppressedReminderIdRef.current = activeReminder.id;
+    }
+
+    setReminderHoldActive(false);
+    setHeldReminder(null);
+    setHoverExpandLocked(true);
+    clearTimerRef(expandTimerRef);
+    clearTimerRef(collapseTimerRef);
+    clearTimerRef(reminderCollapseTimerRef);
+    clearTimerRef(reminderHoldReleaseTimerRef);
+    requestWindowMode(false, { suppressHoverUntilLeave: false });
+  };
+
+  const stableCompactContent = getStableCompactContent(isLoading, state, loadError, activeSource, visibleReminder);
+  const hasExpandedBody = shouldShowExpandedBody(isLoading, state, loadError);
+  const expandedBody = getExpandedBody(
+    displayState,
+    handleOpenTarget,
+    handleJumpToSession,
+    handleResolveApproval,
+    handleAnswerQuestion
+  );
+  const measureBody = hasExpandedBody ? expandedBody : null;
+
+  const syncExpandedContentHeightBeforeExpand = useCallback(async (): Promise<void> => {
+    const measureElement = expandedMeasureRef.current;
+    if (!measureElement || !measureBody) {
+      return;
+    }
+
+    const nextHeight = Math.max(
+      APP_CONFIG.window.compactHeight,
+      Math.min(APP_CONFIG.window.expandedHeight, Math.ceil(measureElement.getBoundingClientRect().height))
+    );
+
+    lastMeasuredExpandedHeightRef.current = nextHeight;
+    await window.api.app.setExpandedContentHeight(nextHeight);
+  }, [measureBody]);
+
+  const syncExpectedIslandVisualSize = useCallback((expanded: boolean): void => {
+    if (!expanded) {
+      setIslandVisualSize({
+        width: APP_CONFIG.window.compactWidth,
+        height: APP_CONFIG.window.compactHeight,
+      });
+      return;
+    }
+
+    const expectedHeight = Math.max(
+      APP_CONFIG.window.compactHeight,
+      Math.min(
+        APP_CONFIG.window.expandedHeight,
+        Math.ceil(lastMeasuredExpandedHeightRef.current ?? APP_CONFIG.window.expandedHeight)
+      )
+    );
+
+    setIslandVisualSize((currentSize) => (
+      currentSize.width === APP_CONFIG.window.expandedWidth && currentSize.height === expectedHeight
+        ? currentSize
+        : {
+            width: APP_CONFIG.window.expandedWidth,
+            height: expectedHeight,
+          }
+    ));
+  }, []);
 
   const isExpandedVisual = presentationMode === 'expanding' || presentationMode === 'expanded';
   const keepsDetailVisible = presentationMode !== 'compact';
 
-  const requestWindowMode = useCallback((expanded: boolean): void => {
+  const requestWindowMode = useCallback((expanded: boolean, options?: OverlayExpandOptions): void => {
     const isAlreadyExpanded = presentationMode === 'expanded' || presentationMode === 'expanding';
     const isAlreadyCompact = presentationMode === 'compact' || presentationMode === 'collapsing';
 
@@ -390,29 +515,46 @@ function OverlayApp(): JSX.Element {
       return;
     }
 
-    clearTimerRef(shellAnimationTimerRef);
-    setIsShellAnimating(true);
-    setPresentationMode(expanded ? 'expanding' : 'collapsing');
-    void window.api.app.setOverlayExpanded(expanded);
+    void (async () => {
+      if (expanded) {
+        await syncExpandedContentHeightBeforeExpand();
+      }
 
-    shellAnimationTimerRef.current = window.setTimeout(() => {
-      shellAnimationTimerRef.current = null;
-      setIsShellAnimating(false);
-      setPresentationMode(expanded ? 'expanded' : 'compact');
-    }, expanded ? APP_CONFIG.window.expandTransitionMs : APP_CONFIG.window.collapseTransitionMs);
-  }, [presentationMode]);
+      syncExpectedIslandVisualSize(expanded);
+      clearTimerRef(shellAnimationTimerRef);
+      setIsShellAnimating(true);
+      setPresentationMode(expanded ? 'expanding' : 'collapsing');
+      await window.api.app.setOverlayExpanded(expanded, options);
+
+      shellAnimationTimerRef.current = window.setTimeout(() => {
+        shellAnimationTimerRef.current = null;
+        setIsShellAnimating(false);
+        setPresentationMode(expanded ? 'expanded' : 'compact');
+      }, expanded ? APP_CONFIG.window.expandTransitionMs : APP_CONFIG.window.collapseTransitionMs);
+    })();
+  }, [presentationMode, syncExpandedContentHeightBeforeExpand, syncExpectedIslandVisualSize]);
 
   const collapseAndLockHover = useCallback((): void => {
-    hoverExpandLockedRef.current = true;
+    setHoverExpandLocked(true);
     clearTimerRef(expandTimerRef);
     clearTimerRef(collapseTimerRef);
     requestWindowMode(false);
-  }, [requestWindowMode]);
+  }, [requestWindowMode, setHoverExpandLocked]);
 
-  const stableCompactContent = getStableCompactContent(isLoading, state, loadError, activeSource, visibleReminder);
-  const hasExpandedBody = shouldShowExpandedBody(isLoading, state, loadError);
-  const expandedBody = getExpandedBody(displayState, handleOpenTarget, handleJumpToSession, handleResolveApproval);
-  const measureBody = hasExpandedBody ? expandedBody : null;
+  const scheduleReminderExpiryCollapse = useCallback((reminder: AgentReminder): void => {
+    clearTimerRef(reminderCollapseTimerRef);
+
+    if (reminder.expiresAtMs === null || reminderHoldActiveRef.current) {
+      return;
+    }
+
+    const delayMs = Math.max(reminder.expiresAtMs - Date.now(), 0);
+    reminderCollapseTimerRef.current = window.setTimeout(() => {
+      reminderCollapseTimerRef.current = null;
+      reminderExpandedRef.current = false;
+      collapseAndLockHover();
+    }, delayMs);
+  }, [collapseAndLockHover]);
 
   const overlayClassName = useMemo(() => {
     const expandedClassName = isExpandedVisual ? ' overlay-shell--expanded' : '';
@@ -421,7 +563,6 @@ function OverlayApp(): JSX.Element {
 
     return `overlay-shell${expandedClassName}${animatingClassName}${hostClassName}`;
   }, [isExpandedVisual, isShellAnimating, overlayHostKind]);
-  const usesRendererHover = overlayHostKind !== 'native-macos-panel';
 
   const islandClassName = useMemo(() => {
     const phaseClassName = ` island--${presentationMode}`;
@@ -449,6 +590,23 @@ function OverlayApp(): JSX.Element {
   }, [isExpandedVisual, requestWindowMode]);
 
   const scheduleCollapse = useCallback((): void => {
+    clearTimerRef(expandTimerRef);
+
+    if (keepsReminderPinned) {
+      return;
+    }
+
+    if (!isExpandedVisual || collapseTimerRef.current !== null) {
+      return;
+    }
+
+    collapseTimerRef.current = window.setTimeout(() => {
+      collapseTimerRef.current = null;
+      requestWindowMode(false);
+    }, APP_CONFIG.window.collapseHoverDelayMs);
+  }, [isExpandedVisual, keepsReminderPinned, requestWindowMode]);
+
+  const scheduleCollapseAfterReminderHold = useCallback((): void => {
     clearTimerRef(expandTimerRef);
 
     if (!isExpandedVisual || collapseTimerRef.current !== null) {
@@ -487,8 +645,10 @@ function OverlayApp(): JSX.Element {
       clearTimerRef(collapseTimerRef);
       clearTimerRef(shellAnimationTimerRef);
       clearTimerRef(reminderCollapseTimerRef);
+      clearTimerRef(reminderHoldReleaseTimerRef);
+      setReminderHoldActive(false);
     };
-  }, []);
+  }, [setReminderHoldActive]);
 
   useEffect(() => {
     return window.api.app.subscribeOverlayMode((mode) => {
@@ -496,6 +656,7 @@ function OverlayApp(): JSX.Element {
       clearTimerRef(collapseTimerRef);
       clearTimerRef(shellAnimationTimerRef);
       setIsShellAnimating(true);
+      syncExpectedIslandVisualSize(mode === 'expanded');
 
       const nextMode = mode === 'expanded' ? 'expanding' : 'collapsing';
       const finalMode = mode === 'expanded' ? 'expanded' : 'compact';
@@ -510,7 +671,7 @@ function OverlayApp(): JSX.Element {
         setPresentationMode(finalMode);
       }, durationMs);
     });
-  }, []);
+  }, [syncExpectedIslandVisualSize]);
 
   const syncIslandVisualSize = useCallback((width: number, height: number): void => {
     if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
@@ -574,11 +735,8 @@ function OverlayApp(): JSX.Element {
       return;
     }
 
-    setIslandVisualSize({
-      width: APP_CONFIG.window.compactWidth,
-      height: APP_CONFIG.window.compactHeight,
-    });
-  }, [presentationMode]);
+    syncExpectedIslandVisualSize(false);
+  }, [presentationMode, syncExpectedIslandVisualSize]);
 
   useLayoutEffect(() => {
     const measureElement = expandedMeasureRef.current;
@@ -602,12 +760,44 @@ function OverlayApp(): JSX.Element {
   }, [measureBody, reportExpandedContentHeight]);
 
   useEffect(() => {
+    activeReminderRef.current = activeReminder;
+  }, [activeReminder]);
+
+  useEffect(() => {
+    if (stateReminder) {
+      lastReminderSnapshotRef.current = stateReminder;
+      if (heldReminder?.id !== stateReminder.id && heldReminder !== null) {
+        setHeldReminder(null);
+      }
+      return;
+    }
+
+    if (!reminderHoldActiveRef.current) {
+      if (heldReminder !== null) {
+        setHeldReminder(null);
+      }
+      return;
+    }
+
+    const reminderSnapshot = lastReminderSnapshotRef.current;
+    if (!reminderSnapshot || reminderSnapshot.expiresAtMs === null) {
+      return;
+    }
+
+    if (heldReminder?.id === reminderSnapshot.id) {
+      return;
+    }
+
+    setHeldReminder(reminderSnapshot);
+  }, [heldReminder, stateReminder]);
+
+  useEffect(() => {
     clearTimerRef(reminderCollapseTimerRef);
 
     const nextReminderId = activeReminder?.id ?? null;
     if (nextReminderId !== lastReminderIdRef.current) {
       suppressedReminderIdRef.current = null;
-      hoverExpandLockedRef.current = false;
+      setHoverExpandLocked(false);
       lastReminderIdRef.current = nextReminderId;
     }
 
@@ -628,19 +818,12 @@ function OverlayApp(): JSX.Element {
     reminderExpandedRef.current = true;
     requestWindowMode(true);
 
-    if (activeReminder.expiresAtMs !== null) {
-      const delayMs = Math.max(activeReminder.expiresAtMs - Date.now(), 0);
-      reminderCollapseTimerRef.current = window.setTimeout(() => {
-        reminderCollapseTimerRef.current = null;
-        reminderExpandedRef.current = false;
-        collapseAndLockHover();
-      }, delayMs);
-    }
+    scheduleReminderExpiryCollapse(activeReminder);
 
     return () => {
       clearTimerRef(reminderCollapseTimerRef);
     };
-  }, [activeReminder, collapseAndLockHover, requestWindowMode]);
+  }, [activeReminder, requestWindowMode, scheduleReminderExpiryCollapse]);
 
   return (
     <>
@@ -655,6 +838,26 @@ function OverlayApp(): JSX.Element {
           aria-live="polite"
           aria-label={isExpandedVisual ? 'Dynamic island expanded details' : 'Dynamic island compact summary'}
           onMouseEnter={() => {
+            if (hasHoverHoldReminder) {
+              clearTimerRef(reminderHoldReleaseTimerRef);
+              setReminderHoldActive(true);
+              const currentReminder = activeReminderRef.current;
+              if (currentReminder && currentReminder.expiresAtMs !== null) {
+                lastReminderSnapshotRef.current = currentReminder;
+                if (heldReminder?.id !== currentReminder.id) {
+                  setHeldReminder(currentReminder);
+                }
+              }
+              clearTimerRef(reminderCollapseTimerRef);
+
+              if (!usesRendererHover) {
+                return;
+              }
+
+              clearTimerRef(collapseTimerRef);
+              return;
+            }
+
             if (!usesRendererHover) {
               return;
             }
@@ -662,11 +865,44 @@ function OverlayApp(): JSX.Element {
             scheduleExpand();
           }}
           onMouseLeave={() => {
+            if (hasHoverHoldReminder) {
+              clearTimerRef(reminderHoldReleaseTimerRef);
+              reminderHoldReleaseTimerRef.current = window.setTimeout(() => {
+                reminderHoldReleaseTimerRef.current = null;
+                setReminderHoldActive(false);
+                setHeldReminder(null);
+                if (!usesRendererHover) {
+                  return;
+                }
+
+                const currentReminder = activeReminderRef.current;
+                if (
+                  currentReminder
+                  && currentReminder.shouldExpand
+                  && (currentReminder.expiresAtMs === null || currentReminder.expiresAtMs > Date.now())
+                ) {
+                  scheduleReminderExpiryCollapse(currentReminder);
+                  return;
+                }
+
+                setHoverExpandLocked(false);
+                scheduleCollapseAfterReminderHold();
+              }, REMINDER_HOLD_GRACE_MS);
+            }
+
             if (!usesRendererHover) {
               return;
             }
 
-            hoverExpandLockedRef.current = false;
+            if (hasHoverHoldReminder) {
+              return;
+            }
+
+            if (keepsReminderPinned) {
+              return;
+            }
+
+            setHoverExpandLocked(false);
             scheduleCollapse();
           }}
         >

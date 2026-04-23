@@ -92,25 +92,63 @@ describe('parseAgentHookPayload', () => {
 
     expect(result).not.toBeNull();
     expect(result?.session.phase).toBe('needs-approval');
-    expect(result?.session.summary).toBe('等待你的确认');
+    expect(result?.session.summary).toBe('Codex wants to run a shell command.');
     expect(result?.session.detail).toBe('npm install');
     expect(result?.session.approvalRequest).toEqual({
       kind: 'command',
+      title: 'Run Bash command',
+      summary: 'Codex wants to run a shell command.',
       command: 'npm install',
       rememberKey: 'npm install',
+      affectedPath: 'npm install',
+      toolName: undefined,
       options: [
         { id: 'deny', label: '拒绝' },
         { id: 'allow-once', label: '同意' },
       ],
     });
     expect(result?.reminder?.tone).toBe('attention');
-    expect(result?.reminder?.title).toBe('Codex 需要确认');
-    expect(result?.reminder?.summary).toBe('Install project dependencies');
+    expect(result?.reminder?.title).toBe('Run Bash command');
+    expect(result?.reminder?.summary).toBe('Codex wants to run a shell command.');
     expect(result?.reminder?.detail).toBe('npm install');
     expect(result?.reminder?.expiresAtMs).toBeNull();
   });
 
-  it('maps Codex PreToolUse command hooks to non-blocking running sessions', () => {
+  it('maps Codex PreToolUse command hooks to attention reminders', () => {
+    const result = parseAgentHookPayload('codex', {
+      cwd: '/Users/sai/Documents/agent_island',
+      hook_event_name: 'PreToolUse',
+      session_id: 'session-1',
+      tool_name: 'exec_command',
+      tool_input: {
+        command: 'curl -I https://example.com',
+        description: 'Do you want to allow a brief outbound network request so we can test network access permission?',
+      },
+    }, 1_717_171_717_000);
+
+    expect(result).not.toBeNull();
+    expect(result?.session.phase).toBe('needs-approval');
+    expect(result?.session.summary).toBe('Codex wants to run a shell command.');
+    expect(result?.session.detail).toBe('curl -I https://example.com');
+    expect(result?.session.approvalRequest).toEqual({
+      kind: 'command',
+      title: 'Run Bash command',
+      summary: 'Codex wants to run a shell command.',
+      command: 'curl -I https://example.com',
+      rememberKey: 'curl -I https://example.com',
+      affectedPath: 'curl -I https://example.com',
+      toolName: undefined,
+      options: [
+        { id: 'deny', label: '拒绝' },
+        { id: 'allow-once', label: '同意' },
+      ],
+    });
+    expect(result?.reminder?.tone).toBe('attention');
+    expect(result?.reminder?.title).toBe('Run Bash command');
+    expect(result?.reminder?.summary).toBe('Codex wants to run a shell command.');
+  });
+
+  it('maps Codex PreToolUse command hooks without descriptions to generic approval reminders', () => {
     const result = parseAgentHookPayload('codex', {
       cwd: '/Users/sai/Documents/agent_island',
       hook_event_name: 'PreToolUse',
@@ -122,11 +160,30 @@ describe('parseAgentHookPayload', () => {
     }, 1_717_171_717_000);
 
     expect(result).not.toBeNull();
-    expect(result?.session.phase).toBe('running');
-    expect(result?.session.summary).toBe('准备执行命令');
+    expect(result?.session.phase).toBe('needs-approval');
+    expect(result?.session.summary).toBe('Codex wants to run a shell command.');
     expect(result?.session.detail).toBe('pnpm install');
-    expect(result?.session.approvalRequest).toBeUndefined();
-    expect(result?.reminder).toBeNull();
+    expect(result?.session.approvalRequest?.command).toBe('pnpm install');
+    expect(result?.reminder?.title).toBe('Run Bash command');
+    expect(result?.reminder?.summary).toBe('Codex wants to run a shell command.');
+  });
+
+  it('maps Codex PreToolUse hooks without command details to generic approval reminders', () => {
+    const result = parseAgentHookPayload('codex', {
+      cwd: '/Users/sai/Documents/agent_island',
+      hook_event_name: 'PreToolUse',
+      session_id: 'session-1',
+      tool_name: 'Read',
+      tool_input: {},
+    }, 1_717_171_717_000);
+
+    expect(result).not.toBeNull();
+    expect(result?.session.phase).toBe('needs-approval');
+    expect(result?.session.summary).toBe('Codex wants to run a shell command.');
+    expect(result?.session.detail).toBe('Read');
+    expect(result?.session.approvalRequest?.command).toBe('Read');
+    expect(result?.reminder?.title).toBe('Run Bash command');
+    expect(result?.reminder?.summary).toBe('Codex wants to run a shell command.');
   });
 
   it('keeps the full multiline command for Codex PreToolUse session details', () => {
@@ -143,8 +200,9 @@ describe('parseAgentHookPayload', () => {
 
     expect(result).not.toBeNull();
     expect(result?.session.detail).toContain('--another bar');
-    expect(result?.session.approvalRequest).toBeUndefined();
-    expect(result?.reminder).toBeNull();
+    expect(result?.session.phase).toBe('needs-approval');
+    expect(result?.session.approvalRequest?.command).toContain('--another bar');
+    expect(result?.reminder?.title).toBe('Run Bash command');
   });
 
   it('keeps full multiline Codex stop reminder text for expanded display', () => {
@@ -197,7 +255,7 @@ describe('parseAgentHookPayload', () => {
     expect(result?.reminder?.summary).toBe(fullMessage);
   });
 
-  it('maps Claude question-like permission requests to attention reminders', () => {
+  it('maps Claude question-like permission requests to structured question reminders', () => {
     const result = parseAgentHookPayload('claude', {
       cwd: '/Users/sai/Documents/agent_island',
       hook_event_name: 'PermissionRequest',
@@ -216,8 +274,10 @@ describe('parseAgentHookPayload', () => {
 
     expect(result).not.toBeNull();
     expect(result?.session.phase).toBe('needs-answer');
+    expect(result?.session.questionPrompt?.title).toBe('Choose environment');
+    expect(result?.session.questionPrompt?.questions[0]?.question).toBe('Deploy to production or staging?');
     expect(result?.reminder?.tone).toBe('attention');
-    expect(result?.reminder?.title).toBe('Claude Code 等待回答');
+    expect(result?.reminder?.title).toBe('Choose environment');
     expect(result?.reminder?.summary).toContain('Deploy to production or staging?');
   });
 
@@ -235,7 +295,7 @@ describe('parseAgentHookPayload', () => {
     expect(result?.session.summary).toBe('已开始新的 Qoder 会话');
   });
 
-  it('maps Cursor blocking hooks to actionable approval reminders', () => {
+  it('maps Cursor blocking hooks to non-blocking activity updates', () => {
     const result = parseAgentHookPayload('cursor', {
       hook_event_name: 'beforeShellExecution',
       conversation_id: 'cursor-1',
@@ -247,24 +307,17 @@ describe('parseAgentHookPayload', () => {
 
     expect(result).not.toBeNull();
     expect(result?.session.tool).toBe('cursor');
-    expect(result?.session.phase).toBe('needs-approval');
+    expect(result?.session.phase).toBe('running');
     expect(result?.session.jumpTarget).toEqual({
       terminalApp: 'Cursor',
       workingDirectory: '/Users/sai/Documents/agent_island',
     });
-    expect(result?.session.approvalRequest).toEqual({
-      kind: 'command',
-      command: 'pnpm lint',
-      rememberKey: 'pnpm lint',
-      options: [
-        { id: 'deny', label: '拒绝' },
-        { id: 'allow-once', label: '同意' },
-      ],
-    });
-    expect(result?.reminder?.title).toBe('Cursor 需要确认');
+    expect(result?.session.summary).toBe('Running: pnpm lint');
+    expect(result?.session.approvalRequest).toBeUndefined();
+    expect(result?.reminder).toBeNull();
   });
 
-  it('maps Gemini notifications to info reminders', () => {
+  it('keeps Gemini notifications as non-blocking activity updates', () => {
     const result = parseAgentHookPayload('gemini', {
       cwd: '/Users/sai/Documents/agent_island',
       hook_event_name: 'Notification',
@@ -279,9 +332,9 @@ describe('parseAgentHookPayload', () => {
 
     expect(result).not.toBeNull();
     expect(result?.session.tool).toBe('gemini');
-    expect(result?.reminder?.tone).toBe('info');
-    expect(result?.reminder?.title).toBe('Gemini CLI 通知');
+    expect(result?.session.summary).toBe('Gemini needs your attention soon.');
     expect(result?.session.detail).toContain('reason');
+    expect(result?.reminder).toBeNull();
   });
 
   it('ignores unsupported sources', () => {

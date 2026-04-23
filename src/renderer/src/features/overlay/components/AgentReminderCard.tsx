@@ -3,10 +3,10 @@ import type { AgentApprovalDecision, AgentReminder, AgentSession } from '@shared
 import { renderAgentRichText } from './AgentRichText';
 
 const PHASE_LABELS = {
-  running: '进行中',
-  'needs-approval': '等待确认',
-  'needs-answer': '等待回答',
-  completed: '已完成',
+  running: 'Running',
+  'needs-approval': 'Needs approval',
+  'needs-answer': 'Needs answer',
+  completed: 'Completed',
 } as const;
 
 function getToneClassName(tone: AgentReminder['tone']): string {
@@ -40,7 +40,16 @@ export function AgentReminderCard({
     && session.phase === 'needs-approval'
     && approvalOptions.length > 0
   );
-  const className = `agent-card ${getToneClassName(reminder.tone)}${isClickable ? ' agent-card--clickable' : ''}`;
+  const shouldUseCardJump = isClickable && !canResolveApproval;
+  const className = `agent-card ${getToneClassName(reminder.tone)}${shouldUseCardJump ? ' agent-card--clickable' : ''}`;
+  const approvalRequest = session?.approvalRequest;
+  const triggerJumpToSession = (): void => {
+    if (!session) {
+      return;
+    }
+
+    onJumpToSession?.(session.id);
+  };
   const content = (
     <>
       <header className="agent-card__header">
@@ -52,27 +61,48 @@ export function AgentReminderCard({
       </header>
       <div className="agent-card__body">
         <p className="agent-card__summary">{renderAgentRichText(reminder.summary)}</p>
-        {reminder.detail ? <p className="agent-card__detail">{renderAgentRichText(reminder.detail)}</p> : null}
+        {approvalRequest ? (
+          <div className="agent-card__approval-preview">
+            <p className="agent-card__approval-command">{renderAgentRichText(approvalRequest.command)}</p>
+            {approvalRequest.affectedPath ? (
+              <p className="agent-card__approval-path">{renderAgentRichText(approvalRequest.affectedPath)}</p>
+            ) : null}
+          </div>
+        ) : reminder.detail ? (
+          <p className="agent-card__detail">{renderAgentRichText(reminder.detail)}</p>
+        ) : null}
       </div>
     </>
   );
 
-  const mainContent = !isClickable || !session
-    ? <div className="agent-card__main">{content}</div>
-    : (
-      <button
-        type="button"
-        className="agent-card__main"
-        onClick={() => {
-          onJumpToSession?.(session.id);
-        }}
-      >
-        {content}
-      </button>
-    );
+  const mainContent = <div className="agent-card__main">{content}</div>;
 
   return (
-    <article className={className}>
+    <article
+      className={className}
+      role={shouldUseCardJump ? 'button' : undefined}
+      tabIndex={shouldUseCardJump ? 0 : undefined}
+      style={shouldUseCardJump ? { cursor: 'pointer' } : undefined}
+      onMouseDown={shouldUseCardJump ? ((event) => {
+        event.preventDefault();
+        triggerJumpToSession();
+      }) : undefined}
+      onClick={shouldUseCardJump ? ((event) => {
+        if (event.detail !== 0) {
+          return;
+        }
+
+        triggerJumpToSession();
+      }) : undefined}
+      onKeyDown={shouldUseCardJump ? ((event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') {
+          return;
+        }
+
+        event.preventDefault();
+        triggerJumpToSession();
+      }) : undefined}
+    >
       {mainContent}
       {canResolveApproval && session ? (
         <footer className="agent-card__footer">
@@ -87,6 +117,10 @@ export function AgentReminderCard({
                   key={option.id}
                   type="button"
                   className={`agent-card__action ${toneClassName}`}
+                  style={{ cursor: option.id === 'deny' ? 'pointer' : 'pointer' }}
+                  onMouseDown={(event) => {
+                    event.stopPropagation();
+                  }}
                   onClick={(event) => {
                     event.stopPropagation();
                     onResolveApproval?.(session.id, option.id);

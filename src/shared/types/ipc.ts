@@ -1,4 +1,10 @@
-import type { AgentApprovalDecision, AgentHookSetup, AgentTool } from './agent-hook';
+import type {
+  AgentApprovalDecision,
+  AgentHookSetup,
+  AgentQuestionResponse,
+  AgentTool,
+  CodexInstallVariantId,
+} from './agent-hook';
 import type { AppConfig } from './config';
 import type { OverlayState } from './source-data';
 
@@ -12,6 +18,9 @@ export type AppStatus = {
 };
 
 export type OverlayWindowMode = 'compact' | 'expanded';
+export type OverlayExpandOptions = {
+  suppressHoverUntilLeave?: boolean;
+};
 
 export type ConfigValidationResult =
   | {
@@ -35,11 +44,17 @@ export type ConfigApi = {
   refreshSources: () => Promise<OverlayState>;
 };
 
+export type AgentInstallManagedHooksOptions = {
+  variantId?: CodexInstallVariantId;
+};
+
 export type AgentApi = {
   getSetup: () => Promise<AgentHookSetup>;
-  installManagedHooks: (source: AgentTool) => Promise<AgentHookSetup>;
+  installManagedHooks: (source: AgentTool, options?: AgentInstallManagedHooksOptions) => Promise<AgentHookSetup>;
   uninstallManagedHooks: (source: AgentTool) => Promise<AgentHookSetup>;
   resolveApproval: (sessionId: string, decision: AgentApprovalDecision) => Promise<boolean>;
+  answerQuestion: (sessionId: string, response: AgentQuestionResponse) => Promise<boolean>;
+  dismissReminder: (sessionId: string) => Promise<boolean>;
   handoffApproval: (sessionId: string) => Promise<boolean>;
 };
 
@@ -47,8 +62,9 @@ export type AppApi = {
   getStatus: () => Promise<AppStatus>;
   openTarget: (targetUrl: string) => Promise<boolean>;
   jumpToAgentSession: (sessionId: string) => Promise<boolean>;
-  setOverlayExpanded: (expanded: boolean) => Promise<OverlayWindowMode>;
+  setOverlayExpanded: (expanded: boolean, options?: OverlayExpandOptions) => Promise<OverlayWindowMode>;
   setExpandedContentHeight: (height: number) => Promise<void>;
+  setReminderHoldActive: (active: boolean) => Promise<void>;
   subscribeOverlayMode: (listener: (mode: OverlayWindowMode) => void) => () => void;
 };
 

@@ -8,6 +8,9 @@ import {
   type AgentApprovalOption,
   type AgentApprovalRequest,
   type AgentJumpTarget,
+  type AgentQuestionItem,
+  type AgentQuestionOption,
+  type AgentQuestionPrompt,
   type AgentReminder,
   type AgentReminderTone,
   type AgentSession,
@@ -153,6 +156,7 @@ const geminiHookPayloadSchema = z.object({
 export type AgentHookEventUpdate = {
   session: AgentSession;
   reminder: AgentReminder | null;
+  transcriptPath?: string;
 };
 
 const TRANSCRIPT_TAIL_BYTES = 1024 * 1024;
@@ -417,7 +421,8 @@ function buildSession(
   prompt?: string,
   detail?: string,
   approvalRequest?: AgentApprovalRequest,
-  extraJumpTargetFields?: Pick<AgentJumpTarget, 'codexThreadId' | 'cmuxSocketPath' | 'tmuxTarget' | 'tmuxSocketPath'>
+  extraJumpTargetFields?: Pick<AgentJumpTarget, 'codexThreadId' | 'cmuxSocketPath' | 'tmuxTarget' | 'tmuxSocketPath'>,
+  questionPrompt?: AgentQuestionPrompt
 ): AgentSession {
   const workspaceName = buildWorkspaceName(cwd);
   const toolLabel = AGENT_TOOL_LABELS[tool];
@@ -433,6 +438,7 @@ function buildSession(
     prompt,
     detail,
     approvalRequest,
+    questionPrompt,
     lastEventName,
     terminalLabel: buildTerminalLabel(terminalApp, terminalTitle),
     jumpTarget: buildJumpTarget({
@@ -461,7 +467,8 @@ function buildWorkspaceSession(
   prompt?: string,
   detail?: string,
   approvalRequest?: AgentApprovalRequest,
-  terminalApp?: string
+  terminalApp?: string,
+  questionPrompt?: AgentQuestionPrompt
 ): AgentSession {
   const workspaceName = buildWorkspaceName(cwd);
   const toolLabel = AGENT_TOOL_LABELS[tool];
@@ -477,6 +484,7 @@ function buildWorkspaceSession(
     prompt,
     detail,
     approvalRequest,
+    questionPrompt,
     lastEventName,
     terminalLabel: terminalApp,
     jumpTarget: buildJumpTarget({
@@ -526,12 +534,130 @@ function buildReminder(
   };
 }
 
-function buildAgentCommandApproval(command: string, options: AgentApprovalOption[] = STANDARD_PERMISSION_OPTIONS): AgentApprovalRequest {
+function buildAgentCommandApproval(args: {
+  title: string;
+  summary: string;
+  command: string;
+  affectedPath?: string;
+  toolName?: string;
+  options?: AgentApprovalOption[];
+}): AgentApprovalRequest {
+  const {
+    title,
+    summary,
+    command,
+    affectedPath,
+    toolName,
+    options = STANDARD_PERMISSION_OPTIONS,
+  } = args;
+
   return {
     kind: 'command',
+    title,
+    summary,
     command,
     rememberKey: command,
+    affectedPath,
+    toolName,
     options: options.map((option) => ({ ...option })),
+  };
+}
+
+function buildApprovalOptions(toolName?: string): AgentApprovalOption[] {
+  const options = STANDARD_PERMISSION_OPTIONS.map((option) => ({ ...option }));
+
+  if (toolName) {
+    options.push({
+      id: 'allow-always',
+      label: `始终允许（${toolName}）`,
+    });
+  }
+
+  return options;
+}
+
+function normalizeQuestionOption(option: unknown): AgentQuestionOption | null {
+  if (typeof option === 'string') {
+    const label = normalizeText(option, 80);
+    return label ? { label, description: '', allowsFreeform: false } : null;
+  }
+
+  if (typeof option !== 'object' || option === null) {
+    return null;
+  }
+
+  const record = option as Record<string, unknown>;
+  const label = normalizeText(typeof record.label === 'string' ? record.label : undefined, 80);
+
+  if (!label) {
+    return null;
+  }
+
+  return {
+    label,
+    description: normalizeText(typeof record.description === 'string' ? record.description : undefined, 140) ?? '',
+    allowsFreeform: record.allowsFreeform === true,
+  };
+}
+
+function buildQuestionPrompt(toolInput: unknown, fallbackTitle: string): AgentQuestionPrompt | undefined {
+  if (typeof toolInput !== 'object' || toolInput === null) {
+    return undefined;
+  }
+
+  const record = toolInput as Record<string, unknown>;
+  const parsedQuestions = Array.isArray(record.questions) ? record.questions : [];
+  const structuredQuestions: AgentQuestionItem[] = parsedQuestions.flatMap((item) => {
+    if (typeof item !== 'object' || item === null) {
+      return [];
+    }
+
+    const questionRecord = item as Record<string, unknown>;
+    const question = normalizeText(typeof questionRecord.question === 'string' ? questionRecord.question : undefined, 160);
+    if (!question) {
+      return [];
+    }
+
+    const header = normalizeText(typeof questionRecord.header === 'string' ? questionRecord.header : undefined, 40)
+      ?? 'Question';
+    const options = (Array.isArray(questionRecord.options) ? questionRecord.options : [])
+      .map(normalizeQuestionOption)
+      .filter((option): option is AgentQuestionOption => Boolean(option));
+
+    return [{
+      header,
+      question,
+      options,
+      multiSelect: questionRecord.multiSelect === true,
+    }];
+  });
+
+  if (structuredQuestions.length > 0) {
+    return {
+      title: normalizeText(typeof record.title === 'string' ? record.title : undefined, 140)
+        ?? structuredQuestions[0]?.question
+        ?? fallbackTitle,
+      questions: structuredQuestions,
+    };
+  }
+
+  const directQuestion = normalizeText(typeof record.question === 'string' ? record.question : undefined, 160);
+  if (!directQuestion) {
+    return undefined;
+  }
+
+  const directOptions = (Array.isArray(record.options) ? record.options : [])
+    .map(normalizeQuestionOption)
+    .filter((option): option is AgentQuestionOption => Boolean(option));
+
+  return {
+    title: normalizeText(typeof record.title === 'string' ? record.title : undefined, 140) ?? directQuestion,
+    questions: [{
+      header: normalizeText(typeof record.header === 'string' ? record.header : undefined, 40) ?? 'Question',
+      question: directQuestion,
+      options: directOptions,
+      multiSelect: record.multiSelect === true,
+    }],
   };
 }
 
@@ -615,6 +741,72 @@ function buildPermissionDetail(preferred: Array<string | undefined>): string | u
   return undefined;
 }
 
+function buildCodexApprovalEventUpdate(args: {
+  parsed: z.infer<typeof codexHookPayloadSchema>;
+  timestampMs: number;
+  prompt: string | undefined;
+  toolPreview: string | undefined;
+  fullCommand: string | undefined;
+  codexThreadId: string | undefined;
+}): AgentHookEventUpdate {
+  const {
+    parsed,
+    timestampMs,
+    prompt,
+    toolPreview,
+    fullCommand,
+    codexThreadId,
+  } = args;
+  const phase: AgentSessionPhase = 'needs-approval';
+  const fallbackApprovalText = firstNonEmptyString([
+    fullCommand,
+    toolPreview,
+    parsed.tool_name,
+    'Bash command',
+  ]);
+  const affectedPath = buildPermissionDetail([
+    fullCommand,
+    toolPreview,
+    parsed.tool_name,
+  ]) ?? fallbackApprovalText;
+  const approvalText = fullCommand ?? affectedPath ?? fallbackApprovalText ?? 'Bash command';
+  const approvalRequest = buildAgentCommandApproval({
+    title: 'Run Bash command',
+    summary: 'Codex wants to run a shell command.',
+    command: approvalText,
+    affectedPath,
+    options: buildApprovalOptions(),
+  });
+  const session = buildSession(
+    'codex',
+    parsed.session_id,
+    parsed.cwd,
+    timestampMs,
+    parsed.terminal_app,
+    parsed.terminal_title,
+    parsed.terminal_session_id,
+    parsed.terminal_tty,
+    phase,
+    approvalRequest.summary,
+    parsed.hook_event_name,
+    prompt,
+    affectedPath,
+    approvalRequest,
+    {
+      codexThreadId,
+      cmuxSocketPath: parsed.cmux_socket_path,
+      tmuxTarget: parsed.tmux_target,
+      tmuxSocketPath: parsed.tmux_socket_path,
+    }
+  );
+
+  return {
+    session,
+    reminder: buildReminder(session, timestampMs, 'attention', approvalRequest.title, approvalRequest.summary, affectedPath),
+    transcriptPath: parsed.transcript_path,
+  };
+}
+
 function firstNonEmptyString(values: Array<string | undefined>): string | undefined {
   for (const value of values) {
     if (value && value.trim().length > 0) {
@@ -664,6 +856,7 @@ function parseCodexHookPayload(payload: unknown, timestampMs: number): AgentHook
           }
         ),
         reminder: null,
+        transcriptPath: parsed.transcript_path,
       };
     }
     case 'UserPromptSubmit': {
@@ -691,37 +884,18 @@ function parseCodexHookPayload(payload: unknown, timestampMs: number): AgentHook
           }
         ),
         reminder: null,
+        transcriptPath: parsed.transcript_path,
       };
     }
     case 'PreToolUse': {
-      const detail = fullCommand ? normalizeMultilineText(fullCommand, 1_200) ?? toolPreview : toolPreview;
-      const session = buildSession(
-        'codex',
-        parsed.session_id,
-        parsed.cwd,
+      return buildCodexApprovalEventUpdate({
+        parsed,
         timestampMs,
-        parsed.terminal_app,
-        parsed.terminal_title,
-        parsed.terminal_session_id,
-        parsed.terminal_tty,
-        'running',
-        fullCommand ? '准备执行命令' : parsed.tool_name ? `运行 ${parsed.tool_name}` : '正在执行工具',
-        parsed.hook_event_name,
         prompt,
-        detail,
-        undefined,
-        {
-          codexThreadId,
-          cmuxSocketPath: parsed.cmux_socket_path,
-          tmuxTarget: parsed.tmux_target,
-          tmuxSocketPath: parsed.tmux_socket_path,
-        }
-      );
-
-      return {
-        session,
-        reminder: null,
-      };
+        toolPreview,
+        fullCommand,
+        codexThreadId,
+      });
     }
     case 'PostToolUse': {
       return {
@@ -748,51 +922,18 @@ function parseCodexHookPayload(payload: unknown, timestampMs: number): AgentHook
           }
         ),
         reminder: null,
+        transcriptPath: parsed.transcript_path,
       };
     }
     case 'PermissionRequest': {
-      const needsAnswer = isQuestionRequest(parsed.tool_name, parsed.tool_input);
-      const phase: AgentSessionPhase = needsAnswer ? 'needs-answer' : 'needs-approval';
-      const summary = needsAnswer ? '等待你的回答' : '等待你的确认';
-      const detail = buildPermissionDetail([
-        fullCommand,
-        parsed.tool_input?.description,
-        toolPreview,
-        parsed.tool_name,
-      ]);
-      const reminderTitle = needsAnswer ? 'Codex 等待回答' : 'Codex 需要确认';
-      const reminderSummary = needsAnswer
-        ? (detail ?? summary)
-        : normalizeText(parsed.tool_input?.description, 300) ?? 'Codex 正在请求运行命令的权限。';
-      const approvalText = fullCommand ?? detail;
-      const approvalRequest = !needsAnswer && approvalText ? buildAgentCommandApproval(approvalText) : undefined;
-      const session = buildSession(
-        'codex',
-        parsed.session_id,
-        parsed.cwd,
+      return buildCodexApprovalEventUpdate({
+        parsed,
         timestampMs,
-        parsed.terminal_app,
-        parsed.terminal_title,
-        parsed.terminal_session_id,
-        parsed.terminal_tty,
-        phase,
-        summary,
-        parsed.hook_event_name,
         prompt,
-        detail,
-        approvalRequest,
-        {
-          codexThreadId,
-          cmuxSocketPath: parsed.cmux_socket_path,
-          tmuxTarget: parsed.tmux_target,
-          tmuxSocketPath: parsed.tmux_socket_path,
-        }
-      );
-
-      return {
-        session,
-        reminder: buildReminder(session, timestampMs, 'attention', reminderTitle, reminderSummary, approvalText ? detail : undefined),
-      };
+        toolPreview,
+        fullCommand,
+        codexThreadId,
+      });
     }
     case 'Stop': {
       const summary = normalizeText(parsed.last_assistant_message, 140) ?? '当前回合已完成';
@@ -825,6 +966,7 @@ function parseCodexHookPayload(payload: unknown, timestampMs: number): AgentHook
       return {
         session,
         reminder: buildReminder(session, timestampMs, 'success', 'Codex 已完成', reminderSummary),
+        transcriptPath: parsed.transcript_path,
       };
     }
   }
@@ -948,19 +1090,53 @@ function parseClaudeCompatibleHookPayload(tool: AgentTool, payload: unknown, tim
       };
     }
     case 'PermissionRequest': {
-      const needsAnswer = isQuestionRequest(parsed.tool_name, parsed.tool_input);
-      const phase: AgentSessionPhase = needsAnswer ? 'needs-answer' : 'needs-approval';
-      const summary = needsAnswer ? '等待你的回答' : '等待你的确认';
-      const detail = buildPermissionDetail([
+      const questionPrompt = buildQuestionPrompt(parsed.tool_input, `${toolLabel} has a question for you.`);
+
+      if (questionPrompt) {
+        const questionDetail = questionPrompt.questions[0]?.question;
+        const session = buildSession(
+          tool,
+          parsed.session_id,
+          parsed.cwd,
+          timestampMs,
+          parsed.terminal_app,
+          parsed.terminal_title,
+          parsed.terminal_session_id,
+          parsed.terminal_tty,
+          'needs-answer',
+          questionPrompt.title,
+          parsed.hook_event_name,
+          prompt,
+          questionDetail,
+          undefined,
+          jumpTargetFields,
+          questionPrompt
+        );
+
+        return {
+          session,
+          reminder: buildReminder(session, timestampMs, 'attention', questionPrompt.title, questionDetail ?? questionPrompt.title),
+        };
+      }
+
+      const approvalTitle = normalizeText(parsed.title, 120)
+        ?? (parsed.tool_name ? `Allow ${parsed.tool_name}` : `Allow ${toolLabel} tool`);
+      const approvalSummary = normalizeText(parsed.message, 140) ?? `${toolLabel} needs permission to continue.`;
+      const affectedPath = buildPermissionDetail([
         fullCommand,
         toolPreview,
-        normalizeText(parsed.message, 140),
-        normalizeText(parsed.title, 120),
         normalizeText(parsed.tool_name, 120),
+        parsed.cwd,
       ]);
-      const reminderTitle = needsAnswer ? `${toolLabel} 等待回答` : `${toolLabel} 需要确认`;
-      const approvalText = fullCommand ?? detail;
-      const approvalRequest = !needsAnswer && approvalText ? buildAgentCommandApproval(approvalText) : undefined;
+      const approvalCommand = fullCommand ?? affectedPath ?? approvalTitle;
+      const approvalRequest = buildAgentCommandApproval({
+        title: approvalTitle,
+        summary: approvalSummary,
+        command: approvalCommand,
+        affectedPath,
+        toolName: normalizeText(parsed.tool_name, 80),
+        options: buildApprovalOptions(normalizeText(parsed.tool_name, 80)),
+      });
       const session = buildSession(
         tool,
         parsed.session_id,
@@ -970,18 +1146,18 @@ function parseClaudeCompatibleHookPayload(tool: AgentTool, payload: unknown, tim
         parsed.terminal_title,
         parsed.terminal_session_id,
         parsed.terminal_tty,
-        phase,
-        summary,
+        'needs-approval',
+        approvalSummary,
         parsed.hook_event_name,
         prompt,
-        detail,
+        affectedPath,
         approvalRequest,
         jumpTargetFields
       );
 
       return {
         session,
-        reminder: buildReminder(session, timestampMs, 'attention', reminderTitle, detail ?? summary),
+        reminder: buildReminder(session, timestampMs, 'attention', approvalRequest.title, approvalRequest.summary, affectedPath),
       };
     }
     case 'Stop':
@@ -1068,36 +1244,26 @@ function parseCursorHookPayload(payload: unknown, timestampMs: number): AgentHoo
     }
     case 'beforeShellExecution':
     case 'beforeMCPExecution': {
-      const approvalSummary = parsed.hook_event_name === 'beforeShellExecution'
-        ? 'Cursor 正在请求执行命令的权限。'
-        : `Cursor 正在请求调用 ${normalizeText(parsed.tool_name, 80) ?? 'MCP 工具'} 的权限。`;
-      const approvalText = command
-        ?? detail
-        ?? approvalSummary;
+      const summary = parsed.hook_event_name === 'beforeShellExecution'
+        ? (command ? `Running: ${command}` : 'Running shell command')
+        : parsed.tool_name ? `Calling ${parsed.tool_name}` : 'Calling MCP tool';
       const session = buildWorkspaceSession(
         'cursor',
         parsed.conversation_id,
         primaryWorkspaceRoot,
         timestampMs,
-        'needs-approval',
-        '等待你的确认',
+        'running',
+        summary,
         parsed.hook_event_name,
         prompt,
         detail,
-        buildAgentCommandApproval(approvalText),
+        undefined,
         'Cursor'
       );
 
       return {
         session,
-        reminder: buildReminder(
-          session,
-          timestampMs,
-          'attention',
-          'Cursor 需要确认',
-          command ?? approvalSummary,
-          detail && detail !== command ? detail : undefined
-        ),
+        reminder: null,
       };
     }
     case 'beforeReadFile': {
@@ -1289,7 +1455,7 @@ function parseGeminiHookPayload(payload: unknown, timestampMs: number): AgentHoo
 
       return {
         session,
-        reminder: buildReminder(session, timestampMs, 'info', 'Gemini CLI 通知', notificationSummary, renderedDetails),
+        reminder: null,
       };
     }
     case 'SessionEnd': {

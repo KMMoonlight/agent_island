@@ -12,6 +12,8 @@ export const agentToolSchema = z.enum([
   'kimi',
 ]);
 
+export const codexInstallVariantIdSchema = z.enum(['standard', 'no-pretooluse']);
+
 export const agentSessionPhaseSchema = z.enum(['running', 'needs-approval', 'needs-answer', 'completed']);
 
 export const agentReminderToneSchema = z.enum(['info', 'attention', 'success']);
@@ -23,10 +25,36 @@ export const agentApprovalOptionSchema = z.object({
   label: z.string(),
 });
 
+export const agentQuestionOptionSchema = z.object({
+  label: z.string(),
+  description: z.string(),
+  allowsFreeform: z.boolean(),
+});
+
+export const agentQuestionItemSchema = z.object({
+  header: z.string(),
+  question: z.string(),
+  options: z.array(agentQuestionOptionSchema),
+  multiSelect: z.boolean(),
+});
+
+export const agentQuestionPromptSchema = z.object({
+  title: z.string(),
+  questions: z.array(agentQuestionItemSchema),
+});
+
+export const agentQuestionResponseSchema = z.object({
+  answers: z.record(z.string()),
+});
+
 export const agentApprovalRequestSchema = z.object({
   kind: z.literal('command'),
+  title: z.string(),
+  summary: z.string(),
   command: z.string(),
   rememberKey: z.string(),
+  affectedPath: z.string().optional(),
+  toolName: z.string().optional(),
   options: z.array(agentApprovalOptionSchema),
 });
 
@@ -72,6 +100,7 @@ export const agentSessionSchema = z.object({
   prompt: z.string().optional(),
   detail: z.string().optional(),
   approvalRequest: agentApprovalRequestSchema.optional(),
+  questionPrompt: agentQuestionPromptSchema.optional(),
   lastEventName: z.string(),
   terminalLabel: z.string().optional(),
   jumpTarget: agentJumpTargetSchema.optional(),
@@ -113,10 +142,15 @@ export const agentHookSetupSchema = z.object({
 });
 
 export type AgentTool = z.infer<typeof agentToolSchema>;
+export type CodexInstallVariantId = z.infer<typeof codexInstallVariantIdSchema>;
 export type AgentSessionPhase = z.infer<typeof agentSessionPhaseSchema>;
 export type AgentReminderTone = z.infer<typeof agentReminderToneSchema>;
 export type AgentApprovalDecision = z.infer<typeof agentApprovalDecisionSchema>;
 export type AgentApprovalOption = z.infer<typeof agentApprovalOptionSchema>;
+export type AgentQuestionOption = z.infer<typeof agentQuestionOptionSchema>;
+export type AgentQuestionItem = z.infer<typeof agentQuestionItemSchema>;
+export type AgentQuestionPrompt = z.infer<typeof agentQuestionPromptSchema>;
+export type AgentQuestionResponse = z.infer<typeof agentQuestionResponseSchema>;
 export type AgentApprovalRequest = z.infer<typeof agentApprovalRequestSchema>;
 export type AgentJumpTarget = z.infer<typeof agentJumpTargetSchema>;
 export type AgentHookInstallStatus = z.infer<typeof agentHookInstallStatusSchema>;

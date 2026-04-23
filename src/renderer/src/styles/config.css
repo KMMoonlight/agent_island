@@ -14,3 +14,23 @@ body[data-route='config'] {
 body[data-route='config'] .config-page {
   min-height: 100vh;
 }
+
+body[data-route='config'] .config-page input,
+body[data-route='config'] .config-page textarea,
+body[data-route='config'] .config-page button[role='combobox'] {
+  outline: none !important;
+  box-shadow: none !important;
+  -webkit-box-shadow: none !important;
+}
+
+body[data-route='config'] .config-page input:focus,
+body[data-route='config'] .config-page input:focus-visible,
+body[data-route='config'] .config-page textarea:focus,
+body[data-route='config'] .config-page textarea:focus-visible,
+body[data-route='config'] .config-page button[role='combobox']:focus,
+body[data-route='config'] .config-page button[role='combobox']:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  -webkit-box-shadow: none !important;
+  border-color: rgb(228 228 231) !important;
+}

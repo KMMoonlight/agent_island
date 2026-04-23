@@ -16,6 +16,8 @@ export const IPC_CHANNELS = {
     INSTALL_MANAGED_HOOKS: 'agent:install-managed-hooks',
     UNINSTALL_MANAGED_HOOKS: 'agent:uninstall-managed-hooks',
     RESOLVE_APPROVAL: 'agent:resolve-approval',
+    ANSWER_QUESTION: 'agent:answer-question',
+    DISMISS_REMINDER: 'agent:dismiss-reminder',
     HANDOFF_APPROVAL: 'agent:handoff-approval',
   },
   APP: {
@@ -24,6 +26,7 @@ export const IPC_CHANNELS = {
     GET_STATUS: 'app:get-status',
     SET_OVERLAY_EXPANDED: 'app:set-overlay-expanded',
     SET_EXPANDED_CONTENT_HEIGHT: 'app:set-expanded-content-height',
+    SET_REMINDER_HOLD_ACTIVE: 'app:set-reminder-hold-active',
     OVERLAY_MODE_CHANGED: 'app:overlay-mode-changed',
   },
 } as const;

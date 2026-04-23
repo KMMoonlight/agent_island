@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -13,8 +13,12 @@ import type {
   AgentHookSetup,
   AgentHookSnippet,
   AgentOverlayState,
+  AgentQuestionPrompt,
+  AgentQuestionResponse,
   AgentReminder,
+  AgentReminderTone,
   AgentSession,
+  CodexInstallVariantId,
 } from '../../../shared/types/agent-hook';
 import { AGENT_TOOL_LABELS } from '../../../shared/types/agent-hook';
 import { logger as baseLogger } from '../logger';
@@ -33,6 +37,8 @@ const CODEX_PERMISSION_REQUEST_TIMEOUT_SECONDS = 600;
 const CLAUDE_HOOK_TIMEOUT_SECONDS = 10;
 const CODEX_APPROVAL_MAX_WAIT_MS = 44_000;
 const CODEX_APPROVAL_DENIED_REASON = 'Permission denied in Agent Island.';
+const CODEX_TRANSCRIPT_FALLBACK_POLL_MS = 1_500;
+const TRANSCRIPT_TAIL_BYTES = 1024 * 1024;
 const SUPPORTED_HOOK_SOURCES = [
   'codex',
   'claude',
@@ -54,7 +60,15 @@ const APPROVAL_CAPABLE_SOURCES: HookSource[] = [
   'qwen',
   'factory',
   'codebuddy',
-  'cursor',
+  'kimi',
+];
+
+const QUESTION_CAPABLE_SOURCES: HookSource[] = [
+  'claude',
+  'qoder',
+  'qwen',
+  'factory',
+  'codebuddy',
   'kimi',
 ];
 
@@ -78,6 +92,29 @@ type PendingApprovalRecord = {
   timer: ReturnType<typeof setTimeout> | null;
 };
 
+type PendingQuestionRecord = {
+  source: HookSource;
+  resolve: (response: PendingHookResponse) => void;
+  timer: ReturnType<typeof setTimeout> | null;
+  toolInput: unknown;
+  prompt: AgentQuestionPrompt;
+};
+
+type CodexTranscriptFallbackRecord = {
+  transcriptPath: string;
+  timer: ReturnType<typeof setTimeout> | null;
+  lastHandledTurnId: string | null;
+};
+
+type CodexTranscriptCompletion = {
+  turnId: string;
+  completedAtMs: number;
+  title: string;
+  tone: AgentReminderTone;
+  summary: string;
+  detail?: string;
+};
+
 function escapeForDoubleQuotedShell(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
@@ -88,6 +125,260 @@ function shellQuote(value: string): string {
   }
 
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function normalizeText(value: string | undefined, maxLength = 160): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.replace(/\s+/g, ' ').trim();
+
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function normalizeMultilineText(value: string | undefined, maxLength?: number): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  if (maxLength === undefined || normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function reminderDurationMs(tone: AgentReminderTone): number {
+  switch (tone) {
+    case 'attention':
+      return 30_000;
+    case 'success':
+      return 12_000;
+    case 'info':
+    default:
+      return 8_000;
+  }
+}
+
+function buildReminder(
+  session: AgentSession,
+  timestampMs: number,
+  tone: AgentReminderTone,
+  title: string,
+  summary: string,
+  detail?: string
+): AgentReminder {
+  const expiresAtMs = tone === 'attention' && session.phase !== 'completed'
+    ? null
+    : timestampMs + reminderDurationMs(tone);
+
+  return {
+    id: `${session.id}:${timestampMs}:${session.phase}`,
+    sessionId: session.id,
+    tool: session.tool,
+    phase: session.phase,
+    tone,
+    title,
+    summary,
+    detail,
+    createdAtMs: timestampMs,
+    expiresAtMs,
+    shouldExpand: tone === 'attention' || tone === 'success',
+  };
+}
+
+function readTranscriptTail(transcriptPath: string): { text: string; hasPartialHead: boolean } | undefined {
+  if (!existsSync(transcriptPath)) {
+    return undefined;
+  }
+
+  let fileDescriptor: number | null = null;
+
+  try {
+    const fileSize = statSync(transcriptPath).size;
+    const bytesToRead = Math.min(fileSize, TRANSCRIPT_TAIL_BYTES);
+    const start = Math.max(fileSize - bytesToRead, 0);
+    const buffer = Buffer.alloc(bytesToRead);
+
+    fileDescriptor = openSync(transcriptPath, 'r');
+    readSync(fileDescriptor, buffer, 0, bytesToRead, start);
+
+    return {
+      text: buffer.toString('utf8'),
+      hasPartialHead: start > 0,
+    };
+  } catch {
+    return undefined;
+  } finally {
+    if (fileDescriptor !== null) {
+      closeSync(fileDescriptor);
+    }
+  }
+}
+
+function extractAssistantMessageFromTranscriptRecord(record: unknown): string | undefined {
+  if (typeof record !== 'object' || record === null) {
+    return undefined;
+  }
+
+  const payload = 'payload' in record ? record.payload : undefined;
+  if (typeof payload !== 'object' || payload === null) {
+    return undefined;
+  }
+
+  if (!('type' in payload) || payload.type !== 'message' || !('role' in payload) || payload.role !== 'assistant') {
+    return undefined;
+  }
+
+  const content = 'content' in payload ? payload.content : undefined;
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+
+  const text = content
+    .filter((item) => typeof item === 'object' && item !== null && 'type' in item && item.type === 'output_text')
+    .map((item) => (
+      typeof item === 'object' && item !== null && 'text' in item && typeof item.text === 'string'
+        ? item.text
+        : ''
+    ))
+    .join('\n')
+    .trim();
+
+  return normalizeMultilineText(text);
+}
+
+export function readLatestCodexTranscriptCompletion(transcriptPath: string): CodexTranscriptCompletion | null {
+  const tail = readTranscriptTail(transcriptPath);
+
+  if (!tail) {
+    return null;
+  }
+
+  const lines = tail.text.split('\n');
+
+  if (tail.hasPartialHead) {
+    lines.shift();
+  }
+
+  let currentTurnId: string | null = null;
+  let currentTurnAssistantMessage: string | undefined;
+  let currentTurnErrorMessage: string | undefined;
+  let latestAssistantMessage: string | undefined;
+  let latestCompletion: CodexTranscriptCompletion | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (line.length === 0) {
+      continue;
+    }
+
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+
+    if (typeof parsed !== 'object' || parsed === null || !('type' in parsed)) {
+      continue;
+    }
+
+    if (parsed.type === 'response_item') {
+      const assistantMessage = extractAssistantMessageFromTranscriptRecord(parsed);
+      if (assistantMessage) {
+        latestAssistantMessage = assistantMessage;
+        currentTurnAssistantMessage = assistantMessage;
+      }
+      continue;
+    }
+
+    if (parsed.type !== 'event_msg' || !('payload' in parsed) || typeof parsed.payload !== 'object' || parsed.payload === null) {
+      continue;
+    }
+
+    const payload = parsed.payload as Record<string, unknown>;
+
+    if (payload.type === 'task_started' && typeof payload.turn_id === 'string') {
+      currentTurnId = payload.turn_id;
+      currentTurnAssistantMessage = undefined;
+      currentTurnErrorMessage = undefined;
+      continue;
+    }
+
+    if (payload.type === 'agent_message' && typeof payload.message === 'string') {
+      const assistantMessage = normalizeMultilineText(payload.message);
+      if (assistantMessage) {
+        latestAssistantMessage = assistantMessage;
+        currentTurnAssistantMessage = assistantMessage;
+      }
+      continue;
+    }
+
+    if (payload.type === 'error' && typeof payload.message === 'string') {
+      currentTurnErrorMessage = normalizeMultilineText(payload.message, 1_200) ?? currentTurnErrorMessage;
+      continue;
+    }
+
+    if (payload.type !== 'task_complete' || typeof payload.turn_id !== 'string') {
+      continue;
+    }
+
+    const completedAtRaw = typeof payload.completed_at === 'number' ? payload.completed_at : undefined;
+    const completedAtMs = completedAtRaw === undefined
+      ? Date.now()
+      : completedAtRaw > 10_000_000_000
+        ? Math.round(completedAtRaw)
+        : Math.round(completedAtRaw * 1_000);
+    const detail = normalizeMultilineText(
+      typeof payload.last_agent_message === 'string' ? payload.last_agent_message : undefined
+    ) ?? currentTurnAssistantMessage ?? latestAssistantMessage;
+    const errorMessage = currentTurnErrorMessage;
+    const summary = normalizeText(detail, 140)
+      ?? normalizeText(errorMessage, 140)
+      ?? '当前回合已完成';
+    const hasSuccessfulReply = Boolean(detail);
+
+    latestCompletion = {
+      turnId: payload.turn_id,
+      completedAtMs,
+      title: hasSuccessfulReply ? 'Codex 已完成' : 'Codex 已停止',
+      tone: hasSuccessfulReply ? 'success' : 'attention',
+      summary,
+      detail: detail ?? errorMessage,
+    };
+
+    if (currentTurnId === payload.turn_id) {
+      currentTurnId = null;
+      currentTurnAssistantMessage = undefined;
+      currentTurnErrorMessage = undefined;
+    }
+  }
+
+  return latestCompletion;
 }
 
 function buildCommand(command: string | null, source: HookSource): string | null {
@@ -346,7 +637,10 @@ function buildCodexPermissionDenyResponse(reason: string): PendingHookResponse {
   };
 }
 
-function buildClaudeCompatiblePermissionAllowResponse(): PendingHookResponse {
+function buildClaudeCompatiblePermissionAllowResponse(
+  updatedInput?: unknown,
+  updatedPermissions: unknown[] = []
+): PendingHookResponse {
   return {
     statusCode: 200,
     contentType: 'application/json; charset=utf-8',
@@ -357,6 +651,8 @@ function buildClaudeCompatiblePermissionAllowResponse(): PendingHookResponse {
         hookEventName: 'PermissionRequest',
         decision: {
           behavior: 'allow',
+          ...(updatedInput === undefined ? {} : { updatedInput }),
+          ...(updatedPermissions.length === 0 ? {} : { updatedPermissions }),
         },
       },
     })}\n`,
@@ -381,6 +677,10 @@ function buildClaudeCompatiblePermissionDenyResponse(reason: string): PendingHoo
   };
 }
 
+function buildClaudeCompatibleQuestionAllowResponse(updatedInput: unknown): PendingHookResponse {
+  return buildClaudeCompatiblePermissionAllowResponse(updatedInput);
+}
+
 function buildCursorPermissionAllowResponse(): PendingHookResponse {
   return {
     statusCode: 200,
@@ -401,6 +701,19 @@ function buildCursorPermissionDenyResponse(reason: string): PendingHookResponse 
       permission: 'deny',
       agentMessage: reason,
     })}\n`,
+  };
+}
+
+function mergeQuestionResponseIntoToolInput(toolInput: unknown, response: AgentQuestionResponse): unknown {
+  if (typeof toolInput !== 'object' || toolInput === null || Array.isArray(toolInput)) {
+    return {
+      answers: { ...response.answers },
+    };
+  }
+
+  return {
+    ...(toolInput as Record<string, unknown>),
+    answers: { ...response.answers },
   };
 }
 
@@ -463,10 +776,25 @@ function cloneApprovalRequest(approvalRequest: AgentApprovalRequest | undefined)
   };
 }
 
+function cloneQuestionPrompt(questionPrompt: AgentQuestionPrompt | undefined): AgentQuestionPrompt | undefined {
+  if (!questionPrompt) {
+    return undefined;
+  }
+
+  return {
+    ...questionPrompt,
+    questions: questionPrompt.questions.map((question) => ({
+      ...question,
+      options: question.options.map((option) => ({ ...option })),
+    })),
+  };
+}
+
 function cloneSession(session: AgentSession): AgentSession {
   return {
     ...session,
     approvalRequest: cloneApprovalRequest(session.approvalRequest),
+    questionPrompt: cloneQuestionPrompt(session.questionPrompt),
     jumpTarget: session.jumpTarget ? { ...session.jumpTarget } : undefined,
   };
 }
@@ -492,6 +820,10 @@ export class AgentHookService {
   private reminderTimer: ReturnType<typeof setTimeout> | null = null;
 
   private readonly pendingApprovals = new Map<string, PendingApprovalRecord>();
+
+  private readonly pendingQuestions = new Map<string, PendingQuestionRecord>();
+
+  private readonly codexTranscriptFallbacks = new Map<string, CodexTranscriptFallbackRecord>();
 
   constructor(private readonly sourceStore: SourceStore) {}
 
@@ -531,6 +863,7 @@ export class AgentHookService {
 
   stop(): void {
     this.flushPendingApprovals();
+    this.clearCodexTranscriptFallbacks();
 
     if (this.reminderTimer) {
       clearTimeout(this.reminderTimer);
@@ -547,11 +880,11 @@ export class AgentHookService {
     return cloneSetup(this.setup);
   }
 
-  installManagedHooks(source: AgentTool): AgentHookSetup {
+  installManagedHooks(source: AgentTool, options?: { variantId?: CodexInstallVariantId }): AgentHookSetup {
     this.ensureHookDirectory();
     this.writeBridgeScript();
 
-    const installStatuses = new AgentHookInstallationManager(this.bridgeScriptPath).install(source);
+    const installStatuses = new AgentHookInstallationManager(this.bridgeScriptPath).install(source, options);
     this.setup = {
       ...this.setup,
       bridgeScriptPath: this.bridgeScriptPath,
@@ -900,6 +1233,20 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
           this.writeHookResponse(response, pendingResponse);
           return;
         }
+
+        if (this.shouldAwaitQuestion(hookSource, eventUpdate)) {
+          const toolInput = typeof parsedBody === 'object' && parsedBody !== null && 'tool_input' in parsedBody
+            ? (parsedBody as { tool_input?: unknown }).tool_input
+            : undefined;
+          const pendingResponse = await this.awaitPendingQuestion(
+            eventUpdate.session.id,
+            hookSource,
+            toolInput,
+            eventUpdate.session.questionPrompt
+          );
+          this.writeHookResponse(response, pendingResponse);
+          return;
+        }
       }
     } catch (error) {
       const normalizedError = error instanceof Error ? error : new Error('Unknown hook bridge request failure');
@@ -928,7 +1275,12 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     const nextPhase = isApproved ? 'running' : 'completed';
     const normalizedDecision = decision === 'allow-always' ? 'allow-once' : decision;
     const toolLabel = AGENT_TOOL_LABELS[sourceToTool(pendingApproval.source)];
-    const nextSummary = normalizedDecision === 'allow-once' ? `已同意，${toolLabel} 继续执行` : '已拒绝该权限请求';
+    const approvalRequest = this.agentState.sessions.find((session) => session.id === resolvedSessionId)?.approvalRequest;
+    const nextSummary = decision === 'allow-always' && approvalRequest?.toolName
+      ? `Always allowed ${approvalRequest.toolName} for this session.`
+      : normalizedDecision === 'allow-once'
+      ? `Permission approved for ${toolLabel}.`
+      : 'Permission denied in Agent Island.';
 
     this.logger.info('Resolving pending agent approval', {
       sessionId: resolvedSessionId,
@@ -937,8 +1289,70 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     });
 
     this.syncResolvedSession(resolvedSessionId, nextPhase, nextSummary);
-    this.settlePendingApproval(resolvedSessionId, this.buildApprovalResponse(pendingApproval.source, isApproved));
+    this.settlePendingApproval(
+      resolvedSessionId,
+      this.buildApprovalResponse(pendingApproval.source, decision, approvalRequest)
+    );
 
+    return true;
+  }
+
+  answerPendingQuestion(sessionId: string, response: AgentQuestionResponse): boolean {
+    const pendingSessionId = this.findPendingQuestionSessionId(sessionId);
+    const pendingQuestion = pendingSessionId ? this.pendingQuestions.get(pendingSessionId) : undefined;
+
+    if (!pendingQuestion) {
+      this.logger.warn('Attempted to answer a missing pending question', {
+        requestedSessionId: sessionId,
+        pendingQuestionSessionIds: Array.from(this.pendingQuestions.keys()),
+      });
+      return false;
+    }
+
+    const resolvedSessionId = pendingSessionId as string;
+    const updatedInput = mergeQuestionResponseIntoToolInput(pendingQuestion.toolInput, response);
+    const answerValues = Object.values(response.answers).filter((value) => value.trim().length > 0);
+    const nextSummary = answerValues.length > 0
+      ? `Answered: ${answerValues.join(', ')}`
+      : `Answered ${AGENT_TOOL_LABELS[sourceToTool(pendingQuestion.source)]}'s questions.`;
+
+    this.logger.info('Answering pending agent question', {
+      sessionId: resolvedSessionId,
+      source: pendingQuestion.source,
+      answers: response.answers,
+    });
+
+    this.syncResolvedSession(resolvedSessionId, 'running', nextSummary);
+    this.settlePendingQuestion(
+      resolvedSessionId,
+      buildClaudeCompatibleQuestionAllowResponse(updatedInput)
+    );
+
+    return true;
+  }
+
+  dismissReminder(sessionId: string): boolean {
+    const activeReminder = this.agentState.activeReminder;
+    if (!activeReminder || activeReminder.sessionId !== sessionId) {
+      return false;
+    }
+
+    this.logger.info('Dismissing active agent reminder', {
+      sessionId,
+      reminderId: activeReminder.id,
+      phase: activeReminder.phase,
+    });
+
+    if (this.reminderTimer) {
+      clearTimeout(this.reminderTimer);
+      this.reminderTimer = null;
+    }
+
+    this.agentState = {
+      ...this.agentState,
+      activeReminder: null,
+    };
+    this.sourceStore.setAgentState(this.agentState);
     return true;
   }
 
@@ -990,7 +1404,12 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     });
   }
 
-  private applyEventUpdate(eventUpdate: AgentHookEventUpdate): void {
+  private applyEventUpdate(
+    eventUpdate: AgentHookEventUpdate,
+    options?: {
+      skipCodexTranscriptFallbackSync?: boolean;
+    }
+  ): void {
     this.logger.info('Applying agent hook event', {
       sessionId: eventUpdate.session.id,
       tool: eventUpdate.session.tool,
@@ -1001,7 +1420,8 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     });
 
     const nextSessions = this.upsertSession(this.agentState.sessions, eventUpdate.session);
-    const nextReminder = this.resolveNextReminder(eventUpdate);
+    const mergedSession = nextSessions.find((session) => session.id === eventUpdate.session.id) ?? eventUpdate.session;
+    const nextReminder = this.resolveNextReminder(eventUpdate, mergedSession);
 
     this.agentState = {
       sessions: nextSessions,
@@ -1010,12 +1430,22 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
 
     this.syncReminderTimer(nextReminder);
     this.sourceStore.setAgentState(this.agentState);
+
+    if (!options?.skipCodexTranscriptFallbackSync) {
+      this.syncCodexTranscriptFallback(eventUpdate);
+    }
   }
 
   private shouldAwaitApproval(source: HookSource, eventUpdate: AgentHookEventUpdate): boolean {
     return APPROVAL_CAPABLE_SOURCES.includes(source)
       && eventUpdate.session.phase === 'needs-approval'
       && Boolean(eventUpdate.session.approvalRequest);
+  }
+
+  private shouldAwaitQuestion(source: HookSource, eventUpdate: AgentHookEventUpdate): boolean {
+    return QUESTION_CAPABLE_SOURCES.includes(source)
+      && eventUpdate.session.phase === 'needs-answer'
+      && Boolean(eventUpdate.session.questionPrompt);
   }
 
   private awaitPendingApproval(sessionId: string, source: HookSource): Promise<PendingHookResponse> {
@@ -1044,6 +1474,43 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     });
   }
 
+  private awaitPendingQuestion(
+    sessionId: string,
+    source: HookSource,
+    toolInput: unknown,
+    prompt: AgentQuestionPrompt | undefined
+  ): Promise<PendingHookResponse> {
+    if (!prompt) {
+      return Promise.resolve(buildClaudeCompatiblePermissionDenyResponse('Declined to answer.'));
+    }
+
+    this.settlePendingQuestion(sessionId, buildClaudeCompatiblePermissionDenyResponse('Declined to answer.'));
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.logger.warn('Timed out waiting for agent question response', {
+          sessionId,
+          source,
+        });
+        this.syncResolvedSession(sessionId, 'completed', 'Declined to answer.');
+        this.settlePendingQuestion(sessionId, buildClaudeCompatiblePermissionDenyResponse('Declined to answer.'));
+      }, CODEX_APPROVAL_MAX_WAIT_MS);
+
+      this.logger.info('Waiting for agent question response', {
+        sessionId,
+        source,
+      });
+
+      this.pendingQuestions.set(sessionId, {
+        source,
+        resolve,
+        timer,
+        toolInput,
+        prompt: cloneQuestionPrompt(prompt) ?? prompt,
+      });
+    });
+  }
+
   private findPendingApprovalSessionId(sessionId: string): string | null {
     if (this.pendingApprovals.has(sessionId)) {
       return sessionId;
@@ -1058,6 +1525,27 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
 
     for (const candidate of candidates) {
       if (this.pendingApprovals.has(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private findPendingQuestionSessionId(sessionId: string): string | null {
+    if (this.pendingQuestions.has(sessionId)) {
+      return sessionId;
+    }
+
+    const normalizedSessionId = sessionId.includes(':') ? sessionId.slice(sessionId.indexOf(':') + 1) : sessionId;
+    const candidates = new Set<string>([normalizedSessionId]);
+
+    for (const source of QUESTION_CAPABLE_SOURCES) {
+      candidates.add(`${source}:${normalizedSessionId}`);
+    }
+
+    for (const candidate of candidates) {
+      if (this.pendingQuestions.has(candidate)) {
         return candidate;
       }
     }
@@ -1081,6 +1569,22 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     pendingApproval.resolve(response);
   }
 
+  private settlePendingQuestion(sessionId: string, response: PendingHookResponse): void {
+    const pendingQuestion = this.pendingQuestions.get(sessionId);
+
+    if (!pendingQuestion) {
+      return;
+    }
+
+    this.pendingQuestions.delete(sessionId);
+
+    if (pendingQuestion.timer) {
+      clearTimeout(pendingQuestion.timer);
+    }
+
+    pendingQuestion.resolve(response);
+  }
+
   private flushPendingApprovals(): void {
     for (const [sessionId, pendingApproval] of this.pendingApprovals.entries()) {
       if (pendingApproval.timer) {
@@ -1089,6 +1593,15 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
 
       pendingApproval.resolve({ statusCode: 204 });
       this.pendingApprovals.delete(sessionId);
+    }
+
+    for (const [sessionId, pendingQuestion] of this.pendingQuestions.entries()) {
+      if (pendingQuestion.timer) {
+        clearTimeout(pendingQuestion.timer);
+      }
+
+      pendingQuestion.resolve(buildClaudeCompatiblePermissionDenyResponse('Declined to answer.'));
+      this.pendingQuestions.delete(sessionId);
     }
   }
 
@@ -1104,7 +1617,13 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     response.writeHead(hookResponse.statusCode).end();
   }
 
-  private buildApprovalResponse(source: HookSource, isApproved: boolean): PendingHookResponse {
+  private buildApprovalResponse(
+    source: HookSource,
+    decision: AgentApprovalDecision,
+    approvalRequest?: AgentApprovalRequest
+  ): PendingHookResponse {
+    const isApproved = decision !== 'deny';
+
     if (source === 'codex') {
       return isApproved
         ? buildCodexPermissionAllowResponse()
@@ -1117,9 +1636,26 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
         : buildCursorPermissionDenyResponse(CODEX_APPROVAL_DENIED_REASON);
     }
 
-    return isApproved
-      ? buildClaudeCompatiblePermissionAllowResponse()
-      : buildClaudeCompatiblePermissionDenyResponse(CODEX_APPROVAL_DENIED_REASON);
+    if (!isApproved) {
+      return buildClaudeCompatiblePermissionDenyResponse(CODEX_APPROVAL_DENIED_REASON);
+    }
+
+    if (decision === 'allow-always' && approvalRequest?.toolName) {
+      return buildClaudeCompatiblePermissionAllowResponse(undefined, [
+        {
+          type: 'addRules',
+          destination: 'session',
+          rules: [
+            {
+              toolName: approvalRequest.toolName,
+            },
+          ],
+          behavior: 'allow',
+        },
+      ]);
+    }
+
+    return buildClaudeCompatiblePermissionAllowResponse();
   }
 
   private syncResolvedSession(
@@ -1127,6 +1663,8 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     phase: AgentSession['phase'],
     summary: string
   ): void {
+    const existingSession = this.agentState.sessions.find((session) => session.id === sessionId);
+
     const nextSessions = this.agentState.sessions.map((session) => {
       if (session.id !== sessionId) {
         return cloneSession(session);
@@ -1137,6 +1675,7 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
         phase,
         summary,
         approvalRequest: phase === 'needs-approval' ? cloneApprovalRequest(session.approvalRequest) : undefined,
+        questionPrompt: phase === 'needs-answer' ? cloneQuestionPrompt(session.questionPrompt) : undefined,
         updatedAtMs: Date.now(),
       };
     }).sort((left, right) => right.updatedAtMs - left.updatedAtMs);
@@ -1152,18 +1691,175 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
 
     this.syncReminderTimer(activeReminder);
     this.sourceStore.setAgentState(this.agentState);
+
+    if (existingSession?.tool === 'codex' && phase === 'completed') {
+      this.clearCodexTranscriptFallback(sessionId);
+    }
+  }
+
+  private clearCodexTranscriptFallbacks(): void {
+    for (const record of this.codexTranscriptFallbacks.values()) {
+      if (record.timer) {
+        clearTimeout(record.timer);
+      }
+    }
+
+    this.codexTranscriptFallbacks.clear();
+  }
+
+  private clearCodexTranscriptFallback(sessionId: string): void {
+    const record = this.codexTranscriptFallbacks.get(sessionId);
+
+    if (!record) {
+      return;
+    }
+
+    if (record.timer) {
+      clearTimeout(record.timer);
+    }
+
+    this.codexTranscriptFallbacks.delete(sessionId);
+  }
+
+  private syncCodexTranscriptFallback(eventUpdate: AgentHookEventUpdate): void {
+    if (eventUpdate.session.tool !== 'codex') {
+      return;
+    }
+
+    if (eventUpdate.session.phase === 'completed') {
+      this.clearCodexTranscriptFallback(eventUpdate.session.id);
+      return;
+    }
+
+    if (!eventUpdate.transcriptPath) {
+      return;
+    }
+
+    const existingRecord = this.codexTranscriptFallbacks.get(eventUpdate.session.id);
+    const nextRecord: CodexTranscriptFallbackRecord = existingRecord
+      ? {
+          ...existingRecord,
+          transcriptPath: eventUpdate.transcriptPath,
+        }
+      : {
+          transcriptPath: eventUpdate.transcriptPath,
+          timer: null,
+          lastHandledTurnId: null,
+        };
+
+    if (nextRecord.timer) {
+      clearTimeout(nextRecord.timer);
+    }
+
+    nextRecord.timer = setTimeout(() => {
+      const activeRecord = this.codexTranscriptFallbacks.get(eventUpdate.session.id);
+
+      if (!activeRecord) {
+        return;
+      }
+
+      activeRecord.timer = null;
+      this.checkCodexTranscriptFallback(eventUpdate.session.id);
+    }, CODEX_TRANSCRIPT_FALLBACK_POLL_MS);
+
+    this.codexTranscriptFallbacks.set(eventUpdate.session.id, nextRecord);
+  }
+
+  private checkCodexTranscriptFallback(sessionId: string): void {
+    const record = this.codexTranscriptFallbacks.get(sessionId);
+
+    if (!record) {
+      return;
+    }
+
+    const session = this.agentState.sessions.find((item) => item.id === sessionId);
+
+    if (!session || session.tool !== 'codex') {
+      this.clearCodexTranscriptFallback(sessionId);
+      return;
+    }
+
+    if (session.phase === 'completed') {
+      this.clearCodexTranscriptFallback(sessionId);
+      return;
+    }
+
+    const completion = readLatestCodexTranscriptCompletion(record.transcriptPath);
+
+    if (!completion || completion.turnId === record.lastHandledTurnId || completion.completedAtMs < session.updatedAtMs) {
+      record.timer = setTimeout(() => {
+        const activeRecord = this.codexTranscriptFallbacks.get(sessionId);
+
+        if (!activeRecord) {
+          return;
+        }
+
+        activeRecord.timer = null;
+        this.checkCodexTranscriptFallback(sessionId);
+      }, CODEX_TRANSCRIPT_FALLBACK_POLL_MS);
+      return;
+    }
+
+    record.lastHandledTurnId = completion.turnId;
+
+    const nextSession: AgentSession = {
+      ...cloneSession(session),
+      phase: 'completed',
+      summary: completion.summary,
+      detail: undefined,
+      approvalRequest: undefined,
+      lastEventName: 'StopFallback',
+      updatedAtMs: completion.completedAtMs,
+    };
+    const reminderSummary = completion.detail ?? completion.summary;
+
+    this.logger.info('Synthesizing Codex completion reminder from transcript fallback', {
+      sessionId,
+      transcriptPath: record.transcriptPath,
+      turnId: completion.turnId,
+      tone: completion.tone,
+    });
+
+    this.applyEventUpdate({
+      session: nextSession,
+      reminder: buildReminder(nextSession, completion.completedAtMs, completion.tone, completion.title, reminderSummary),
+      transcriptPath: record.transcriptPath,
+    }, {
+      skipCodexTranscriptFallbackSync: true,
+    });
   }
 
   private upsertSession(currentSessions: AgentSession[], nextSession: AgentSession): AgentSession[] {
     const existingSession = currentSessions.find((session) => session.id === nextSession.id);
+    const preservesApprovalState = Boolean(
+      existingSession
+      && nextSession.phase === 'running'
+      && existingSession.phase === 'needs-approval'
+      && existingSession.approvalRequest
+    );
+    const preservesQuestionState = Boolean(
+      existingSession
+      && nextSession.phase === 'running'
+      && existingSession.phase === 'needs-answer'
+    );
+    const preservesActionableState = preservesApprovalState || preservesQuestionState;
 
     const mergedSession: AgentSession = existingSession
       ? {
           ...existingSession,
           ...nextSession,
+          phase: preservesActionableState ? existingSession.phase : nextSession.phase,
+          summary: preservesActionableState ? existingSession.summary : nextSession.summary,
           prompt: nextSession.prompt ?? existingSession.prompt,
-          detail: nextSession.detail ?? existingSession.detail,
-          approvalRequest: cloneApprovalRequest(nextSession.approvalRequest),
+          detail: preservesActionableState
+            ? existingSession.detail
+            : (nextSession.detail ?? existingSession.detail),
+          approvalRequest: preservesApprovalState
+            ? cloneApprovalRequest(existingSession.approvalRequest)
+            : cloneApprovalRequest(nextSession.approvalRequest),
+          questionPrompt: preservesQuestionState
+            ? cloneQuestionPrompt(existingSession.questionPrompt)
+            : cloneQuestionPrompt(nextSession.questionPrompt),
           terminalLabel: nextSession.terminalLabel ?? existingSession.terminalLabel,
         }
       : nextSession;
@@ -1177,12 +1873,16 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     return nextSessions;
   }
 
-  private resolveNextReminder(eventUpdate: AgentHookEventUpdate): AgentReminder | null {
+  private resolveNextReminder(eventUpdate: AgentHookEventUpdate, mergedSession: AgentSession): AgentReminder | null {
     if (eventUpdate.reminder) {
       return cloneReminder(eventUpdate.reminder);
     }
 
     if (this.agentState.activeReminder?.sessionId === eventUpdate.session.id) {
+      if (mergedSession.phase === 'needs-approval' || mergedSession.phase === 'needs-answer') {
+        return cloneReminder(this.agentState.activeReminder);
+      }
+
       return null;
     }
 

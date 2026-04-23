@@ -67,6 +67,9 @@ module.exports = cachedBinding ?? {
   getPanelDiagnostics() {
     return null;
   },
+  syncPanelPointerState() {
+    return false;
+  },
   orderPanelFrontRegardless() {
     return false;
   },

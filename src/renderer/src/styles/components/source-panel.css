@@ -9,12 +9,6 @@
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  opacity: 0;
-  transform: translateY(10px) scale(0.994);
-  transform-origin: center top;
-  transition:
-    transform 240ms cubic-bezier(0.16, 1, 0.3, 1),
-    opacity 180ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .source-panel::after {
@@ -30,59 +24,6 @@
 
 .source-panel:last-child::after {
   display: none;
-}
-
-.source-panel__error,
-.source-panel__list {
-  opacity: 0;
-  transform: translateY(6px);
-  transition:
-    opacity 170ms cubic-bezier(0.32, 0.72, 0, 1),
-    transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.island--expanding .source-panel,
-.island--expanded .source-panel {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
-.island--expanding .source-panel:nth-child(1) {
-  transition-delay: 182ms;
-}
-
-.island--expanding .source-panel:nth-child(2) {
-  transition-delay: 204ms;
-}
-
-.island--expanding .source-panel:nth-child(3) {
-  transition-delay: 226ms;
-}
-
-.island--expanding .source-panel:nth-child(4) {
-  transition-delay: 248ms;
-}
-
-.island--expanding .source-panel .source-panel__error,
-.island--expanded .source-panel .source-panel__error {
-  opacity: 1;
-  transform: translateY(0);
-  transition-delay: 272ms;
-}
-
-.island--expanding .source-panel .source-panel__list,
-.island--expanded .source-panel .source-panel__list {
-  opacity: 1;
-  transform: translateY(0);
-  transition-delay: 292ms;
-}
-
-.island--collapsing .source-panel,
-.island--collapsing .source-panel__error,
-.island--collapsing .source-panel__list {
-  opacity: 0;
-  transform: translateY(5px) scale(0.995);
-  transition-duration: 120ms;
 }
 
 .source-panel--error {
@@ -155,9 +96,9 @@
   min-width: 0;
   flex: 0 0 auto;
   align-items: center;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: rgb(58 169 98 / 0.24);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: rgb(168 255 197 / 0.96);
   font-size: 0.64rem;
   font-weight: 700;
@@ -185,12 +126,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .source-panel {
-    transition-duration: 0.01ms !important;
-    transition-delay: 0ms !important;
-    animation-duration: 0.01ms !important;
-  }
-
   .source-panel {
     transform: none !important;
     opacity: 1 !important;

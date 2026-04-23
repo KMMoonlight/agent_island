@@ -1,10 +1,10 @@
 import { AGENT_TOOL_LABELS, type AgentSession } from '@shared/types/agent-hook';
 
 const PHASE_LABELS = {
-  running: '进行中',
-  'needs-approval': '等待确认',
-  'needs-answer': '等待回答',
-  completed: '已完成',
+  running: 'Running',
+  'needs-approval': 'Needs approval',
+  'needs-answer': 'Needs answer',
+  completed: 'Completed',
 } as const;
 
 function getToolLabel(tool: AgentSession['tool']): string {

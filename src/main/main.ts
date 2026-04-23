@@ -44,6 +44,7 @@ const trayMenu = new TrayMenu({
 let overlayHost: OverlayHost | null = null;
 let overlayWindowMode: OverlayWindowMode = 'compact';
 let expandedContentHeight: number = APP_CONFIG.window.expandedHeight;
+let reminderHoldActive = false;
 
 function clearMacOsSavedState(): void {
   if (process.platform !== 'darwin') {
@@ -121,6 +122,8 @@ const overlayHostBridge: OverlayHostBridge = {
   },
   getAgentSetup: () => agentHookService.getSetup(),
   resolveAgentApproval: (sessionId, decision) => agentHookService.resolvePendingApproval(sessionId, decision),
+  answerAgentQuestion: (sessionId, response) => agentHookService.answerPendingQuestion(sessionId, response),
+  handoffPendingApproval: (sessionId) => agentHookService.handoffPendingApproval(sessionId),
   getAppStatus: () => sourceStore.getStatus(),
   openTarget: (targetUrl) => openExternalTarget(targetUrl),
   jumpToAgentSession: async (sessionId) => {
@@ -137,10 +140,11 @@ const overlayHostBridge: OverlayHostBridge = {
     });
     return didJump;
   },
-  setOverlayExpanded: (expanded) => {
+  setOverlayExpanded: (expanded, options) => {
     overlayWindowMode = expanded ? 'expanded' : 'compact';
     logger.info('Received overlay mode change', {
       overlayWindowMode,
+      options: options ?? null,
     });
     broadcastOverlayMode(overlayWindowMode);
 
@@ -149,7 +153,7 @@ const overlayHostBridge: OverlayHostBridge = {
       return overlayWindowMode;
     }
 
-    return overlayHost.setMode(overlayWindowMode);
+    return overlayHost.setMode(overlayWindowMode, options);
   },
   setExpandedContentHeight: (height) => {
     expandedContentHeight = Math.max(APP_CONFIG.window.compactHeight, Math.min(APP_CONFIG.window.expandedHeight, Math.round(height)));
@@ -160,6 +164,10 @@ const overlayHostBridge: OverlayHostBridge = {
 
     overlayHost.setExpandedContentHeight(expandedContentHeight);
   },
+  setReminderHoldActive: (active) => {
+    reminderHoldActive = active;
+  },
+  isReminderHoldActive: () => reminderHoldActive,
 };
 
 function broadcastOverlayMode(mode: OverlayWindowMode): void {
@@ -244,8 +252,9 @@ app.whenReady().then(async () => {
   registerConfigHandlers(configService, sourcePoller);
   registerAppControlHandlers(sourceStore, {
     getOverlayMode: () => overlayWindowMode,
-    setOverlayExpanded: (expanded) => overlayHostBridge.setOverlayExpanded(expanded),
+    setOverlayExpanded: (expanded, options) => overlayHostBridge.setOverlayExpanded(expanded, options),
     setExpandedContentHeight: (height) => overlayHostBridge.setExpandedContentHeight(height),
+    setReminderHoldActive: (active) => overlayHostBridge.setReminderHoldActive(active),
   });
   wireStoreUpdates();
 

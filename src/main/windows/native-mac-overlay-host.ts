@@ -94,6 +94,23 @@ function getNativeOverlayBounds(mode: OverlayHostWindowMode): WindowBounds {
   return getHostOverlayBounds(mode);
 }
 
+function logPanelDiagnostics(
+  binding: NativeOverlayBinding,
+  panelHandle: Buffer,
+  context: string
+): void {
+  try {
+    const diagnostics = binding.getPanelDiagnostics(panelHandle, getPrimaryDisplayMetadata());
+    logger.info(`Native overlay diagnostics: ${context}`, diagnostics ?? {});
+  } catch (error) {
+    const normalizedError = error instanceof Error ? error : new Error('Unknown native diagnostics error');
+    logger.warn('Failed to read native overlay diagnostics', {
+      context,
+      message: normalizedError.message,
+    });
+  }
+}
+
 export function createNativeMacOverlayHost(
   binding: NativeOverlayBinding,
   bridge: OverlayHostBridge,
@@ -196,9 +213,29 @@ export function createNativeMacOverlayHost(
     return null;
   };
 
+  const syncNativePointerState = (context: string): void => {
+    try {
+      const didSync = binding.syncPanelPointerState(panelHandle);
+      logger.info('Synced native overlay pointer state', {
+        context,
+        didSync,
+      });
+    } catch (error) {
+      const normalizedError = error instanceof Error ? error : new Error('Unknown native pointer sync error');
+      logger.warn('Failed to sync native overlay pointer state', {
+        context,
+        message: normalizedError.message,
+      });
+    }
+  };
+
   const scheduleModeChange = (mode: OverlayHostWindowMode): void => {
     if (mode === 'expanded') {
       collapseTimer = clearHoverTimer(collapseTimer);
+      if (bridge.isReminderHoldActive()) {
+        return;
+      }
+
       if (suppressExpandUntilPointerLeaves) {
         return;
       }
@@ -214,6 +251,17 @@ export function createNativeMacOverlayHost(
     }
 
     expandTimer = clearHoverTimer(expandTimer);
+    const activeReminder = bridge.getOverlayState().agent.activeReminder;
+    const keepsReminderPinned = Boolean(
+      activeReminder
+      && activeReminder.shouldExpand
+      && activeReminder.expiresAtMs === null
+    );
+
+    if (keepsReminderPinned || bridge.isReminderHoldActive()) {
+      return;
+    }
+
     if (currentMode === 'compact' || collapseTimer !== null) {
       return;
     }
@@ -237,6 +285,13 @@ export function createNativeMacOverlayHost(
 
     const targetBounds = getHostOverlayBounds(mode, expandedContentHeight);
     const initialBounds = getCurrentBounds();
+    logger.info('Animating native overlay panel', {
+      mode,
+      initialBounds,
+      targetBounds,
+      expandedContentHeight,
+    });
+    logPanelDiagnostics(binding, panelHandle, `before-${mode}`);
     const hasChanges =
       initialBounds.x !== targetBounds.x ||
       initialBounds.y !== targetBounds.y ||
@@ -245,6 +300,10 @@ export function createNativeMacOverlayHost(
 
     if (!hasChanges) {
       applyBounds(targetBounds);
+      if (mode === 'compact') {
+        syncNativePointerState('after-compact-no-change');
+      }
+      logPanelDiagnostics(binding, panelHandle, `after-${mode}-no-change`);
       return;
     }
 
@@ -276,6 +335,10 @@ export function createNativeMacOverlayHost(
           y: animation.lockTopEdge ? lockedY : targetBounds.y,
         });
         clearAnimation();
+        if (mode === 'compact') {
+          syncNativePointerState('after-compact');
+        }
+        logPanelDiagnostics(binding, panelHandle, `after-${mode}`);
       }
     };
 
@@ -340,6 +403,39 @@ export function createNativeMacOverlayHost(
           sendResponse(message.requestId, didResolve);
           return;
         }
+        case 'agent:answer-question': {
+          const payload =
+            typeof message.payload === 'object' && message.payload !== null
+              ? message.payload as { sessionId?: unknown; response?: unknown }
+              : null;
+
+          if (
+            typeof payload?.sessionId !== 'string'
+            || typeof payload.response !== 'object'
+            || payload.response === null
+            || !('answers' in payload.response)
+          ) {
+            sendResponse(message.requestId, false);
+            return;
+          }
+
+          const didAnswer = await bridge.answerAgentQuestion(
+            payload.sessionId,
+            payload.response as never
+          );
+          sendResponse(message.requestId, didAnswer);
+          return;
+        }
+        case 'agent:handoff-approval': {
+          if (typeof message.payload !== 'string') {
+            sendResponse(message.requestId, false);
+            return;
+          }
+
+          const didHandoff = await bridge.handoffPendingApproval(message.payload);
+          sendResponse(message.requestId, didHandoff);
+          return;
+        }
         case 'app:get-status': {
           sendResponse(message.requestId, bridge.getAppStatus());
           return;
@@ -376,6 +472,16 @@ export function createNativeMacOverlayHost(
           }
 
           bridge.setExpandedContentHeight(message.payload);
+          sendResponse(message.requestId, null);
+          return;
+        }
+        case 'app:set-reminder-hold-active': {
+          if (typeof message.payload !== 'boolean') {
+            sendResponse(message.requestId, null);
+            return;
+          }
+
+          bridge.setReminderHoldActive(message.payload);
           sendResponse(message.requestId, null);
           return;
         }
@@ -447,6 +553,13 @@ export function createNativeMacOverlayHost(
         return;
       }
 
+      if (message.kind === 'event' && message.channel === 'native:set-cursor') {
+        logger.info('Native cursor event', {
+          payload: message.payload,
+        });
+        return;
+      }
+
       if (message.kind === 'request') {
         void handleRequest(message);
       }
@@ -478,9 +591,10 @@ export function createNativeMacOverlayHost(
         payload,
       });
     },
-    setMode: (mode) => {
-      if (mode === 'compact' && isPointerInside) {
-        suppressExpandUntilPointerLeaves = true;
+    setMode: (mode, options) => {
+      if (mode === 'compact') {
+        const shouldSuppressHoverUntilLeave = options?.suppressHoverUntilLeave ?? isPointerInside;
+        suppressExpandUntilPointerLeaves = shouldSuppressHoverUntilLeave && isPointerInside;
       }
       currentMode = mode;
       animatePanel(mode);
@@ -491,7 +605,16 @@ export function createNativeMacOverlayHost(
         return;
       }
 
-      expandedContentHeight = Math.max(APP_CONFIG.window.compactHeight, Math.min(APP_CONFIG.window.expandedHeight, Math.round(height)));
+      const normalizedHeight = Math.max(
+        APP_CONFIG.window.compactHeight,
+        Math.min(APP_CONFIG.window.expandedHeight, Math.round(height))
+      );
+
+      if (expandedContentHeight === normalizedHeight) {
+        return;
+      }
+
+      expandedContentHeight = normalizedHeight;
 
       if (currentMode === 'expanded') {
         animatePanel('expanded');

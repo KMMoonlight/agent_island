@@ -46,6 +46,7 @@ export type NativeOverlayBinding = {
   setPanelFrame: (panelHandle: NativeOverlayPanelHandle, frame: NativeOverlayFrame, display?: NativeOverlayDisplay) => boolean;
   getPanelFrame: (panelHandle: NativeOverlayPanelHandle, display?: NativeOverlayDisplay) => NativeOverlayFrame | null;
   getPanelDiagnostics: (panelHandle: NativeOverlayPanelHandle, display?: NativeOverlayDisplay) => NativeOverlayDiagnostics | null;
+  syncPanelPointerState: (panelHandle: NativeOverlayPanelHandle) => boolean;
   orderPanelFrontRegardless: (panelHandle: NativeOverlayPanelHandle) => boolean;
   orderPanelOut: (panelHandle: NativeOverlayPanelHandle) => boolean;
 };

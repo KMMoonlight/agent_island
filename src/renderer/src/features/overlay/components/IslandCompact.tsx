@@ -1,18 +1,26 @@
+import lightBulbIcon from '../../../assets/compact-icons/light-bulb.svg';
+import faceIdIcon from '../../../assets/compact-icons/face-id.svg';
+import helpIcon from '../../../assets/compact-icons/help.svg';
+import clipIcon from '../../../assets/compact-icons/clip.svg';
+import polaroidIcon from '../../../assets/compact-icons/polaroid.svg';
+import coinIcon from '../../../assets/compact-icons/coin.svg';
+import targetIcon from '../../../assets/compact-icons/target.svg';
+import startupIcon from '../../../assets/compact-icons/startup.svg';
+import androidIcon from '../../../assets/compact-icons/android.svg';
+
 import { AGENT_TOOL_LABELS, type AgentReminder } from '@shared/types/agent-hook';
 import type { SourceState } from '@shared/types/source-data';
 
 export type PixelCompactIconVariant =
-  | 'sync'
-  | 'cat'
-  | 'dog'
-  | 'hamster'
-  | 'dino'
-  | 'plane'
-  | 'rocket'
-  | 'car'
-  | 'octopus'
-  | 'warn'
-  | 'info';
+  | 'lightBulb'
+  | 'faceId'
+  | 'help'
+  | 'clip'
+  | 'polaroid'
+  | 'coin'
+  | 'target'
+  | 'startup'
+  | 'android';
 
 type IslandCompactProps = {
   source: SourceState | null;
@@ -21,6 +29,51 @@ type IslandCompactProps = {
 
 type PixelCompactIconProps = {
   variant: PixelCompactIconVariant;
+};
+
+const READY_ICON_VARIANTS: PixelCompactIconVariant[] = [
+  'lightBulb',
+  'faceId',
+  'help',
+  'clip',
+  'polaroid',
+  'coin',
+  'target',
+  'startup',
+  'android',
+];
+
+function shuffleVariants(variants: readonly PixelCompactIconVariant[]): PixelCompactIconVariant[] {
+  const next = [...variants];
+
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const current = next[index];
+    const swapped = next[swapIndex];
+
+    if (!current || !swapped) {
+      continue;
+    }
+
+    next[index] = swapped;
+    next[swapIndex] = current;
+  }
+
+  return next;
+}
+
+const STARTUP_ICON_VARIANTS = shuffleVariants(READY_ICON_VARIANTS);
+
+const ICON_ASSETS: Record<PixelCompactIconVariant, string> = {
+  lightBulb: lightBulbIcon,
+  faceId: faceIdIcon,
+  help: helpIcon,
+  clip: clipIcon,
+  polaroid: polaroidIcon,
+  coin: coinIcon,
+  target: targetIcon,
+  startup: startupIcon,
+  android: androidIcon,
 };
 
 function compactCopy(value: string, fallback: string): string {
@@ -43,59 +96,52 @@ function hashCompactSeed(value: string): number {
   return hash;
 }
 
+function pickStartupVariant(index: number): PixelCompactIconVariant {
+  const normalizedIndex = ((index % STARTUP_ICON_VARIANTS.length) + STARTUP_ICON_VARIANTS.length) % STARTUP_ICON_VARIANTS.length;
+  return STARTUP_ICON_VARIANTS[normalizedIndex] ?? 'lightBulb';
+}
+
+export function getPlaceholderIconVariant(kind: 'default' | 'loading' | 'error'): PixelCompactIconVariant {
+  if (kind === 'loading') {
+    return pickStartupVariant(1);
+  }
+
+  if (kind === 'error') {
+    return pickStartupVariant(2);
+  }
+
+  return pickStartupVariant(0);
+}
+
 export function PixelCompactIcon({ variant }: PixelCompactIconProps): JSX.Element {
+  const iconUrl = ICON_ASSETS[variant];
+
   return (
     <span className={`island__pixel-icon island__pixel-icon--${variant}`} aria-hidden="true">
-      <span className="island__pixel-icon-layer island__pixel-icon-layer--outline" />
-      <span className="island__pixel-icon-layer island__pixel-icon-layer--fill" />
-      <span className="island__pixel-icon-layer island__pixel-icon-layer--eyes" />
-      <span className="island__pixel-icon-layer island__pixel-icon-layer--mouth" />
+      <span
+        className={`island__pixel-icon-mask island__pixel-icon-mask--${variant}`}
+        style={{
+          WebkitMaskImage: `url("${iconUrl}")`,
+          maskImage: `url("${iconUrl}")`,
+        }}
+      />
     </span>
   );
 }
 
 function getReadyIconVariant(source: SourceState): PixelCompactIconVariant {
-  const seed = hashCompactSeed(`${source.id}:${source.name}`) % 8;
-
-  if (seed === 0) {
-    return 'cat';
-  }
-
-  if (seed === 1) {
-    return 'dog';
-  }
-
-  if (seed === 2) {
-    return 'hamster';
-  }
-
-  if (seed === 3) {
-    return 'dino';
-  }
-
-  if (seed === 4) {
-    return 'plane';
-  }
-
-  if (seed === 5) {
-    return 'rocket';
-  }
-
-  if (seed === 6) {
-    return 'car';
-  }
-
-  return 'octopus';
+  const seed = hashCompactSeed(`${source.id}:${source.name}`);
+  return pickStartupVariant(seed);
 }
 
 function getSourceIconVariant(source: SourceState): PixelCompactIconVariant {
   switch (source.status) {
     case 'loading':
-      return 'sync';
+      return pickStartupVariant(1);
     case 'error':
-      return 'warn';
+      return pickStartupVariant(2);
     case 'idle':
-      return 'info';
+      return pickStartupVariant(0);
     case 'ready':
     default:
       return getReadyIconVariant(source);
@@ -104,14 +150,14 @@ function getSourceIconVariant(source: SourceState): PixelCompactIconVariant {
 
 function getReminderIconVariant(reminder: AgentReminder): PixelCompactIconVariant {
   if (reminder.tone === 'attention') {
-    return 'warn';
+    return pickStartupVariant(2);
   }
 
   if (reminder.tone === 'success') {
-    return 'rocket';
+    return pickStartupVariant(3);
   }
 
-  return 'info';
+  return pickStartupVariant(0);
 }
 
 function getReminderTitle(reminder: AgentReminder): string {
@@ -139,7 +185,7 @@ export function IslandCompact({ source, reminder = null }: IslandCompactProps): 
   if (!source) {
     return (
       <>
-        <PixelCompactIcon variant="info" />
+        <PixelCompactIcon variant={pickStartupVariant(0)} />
         <div className="island__content island__content--compact">
           <p className="island__title island__title--inline">No sources configured</p>
           <p className="island__summary">前往设置页启用内容</p>

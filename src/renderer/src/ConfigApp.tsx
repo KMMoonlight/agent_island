@@ -1,5 +1,5 @@
 import { Plus, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,30 +12,13 @@ import {
   AGENT_TOOL_LABELS,
   type AgentHookInstallStatus,
   type AgentHookSetup,
-  type AgentHookSnippet,
   type AgentTool,
+  type CodexInstallVariantId,
 } from '@shared/types/agent-hook';
 import type { AppConfig, RequestEntry, RequestMethod, SourceConfig } from '@shared/types/config';
+import type { AgentInstallManagedHooksOptions } from '@shared/types/ipc';
 
 const REQUEST_METHODS: RequestMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
-const SUPPORTED_TERMINAL_LABELS = [
-  'Terminal.app',
-  'iTerm2',
-  'Ghostty',
-  'Warp（仅激活）',
-  'cmux',
-  'tmux',
-  'Zellij',
-  'WezTerm',
-  'Kaku',
-  'VS Code',
-  'VS Code Insiders',
-  'Cursor',
-  'Windsurf',
-  'Trae',
-  'JetBrains IDEs',
-  'Codex.app',
-];
 const TABS = [
   { id: 'scheduled', label: '定时任务', disabled: true },
   { id: 'polling', label: '轮询请求', disabled: false },
@@ -61,14 +44,16 @@ type FieldProps = {
 type AgentAction = {
   mode: 'install' | 'uninstall';
   source: AgentTool;
+  variantId?: CodexInstallVariantId;
 };
 
-type SnippetCardProps = {
-  title: string;
-  description: string;
-  configPath: string;
+type HighlightedTemplateInputProps = {
+  onChange: (value: string) => void;
+  placeholder: string;
   value: string;
 };
+
+const TEMPLATE_INPUT_MIN_HEIGHT_PX = 36;
 
 function createBlankSource(): SourceConfig {
   return {
@@ -151,6 +136,34 @@ function getSaveValidationMessage(config: AppConfig): string | null {
   return null;
 }
 
+function formatJsonString(value: string): string {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(JSON.parse(trimmedValue), null, 2);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeConfigForEditor(config: AppConfig): AppConfig {
+  return {
+    ...config,
+    sources: config.sources.map((source) => ({
+      ...source,
+      request: {
+        ...source.request,
+        body: typeof source.request.body === 'string'
+          ? formatJsonString(source.request.body)
+          : source.request.body,
+      },
+    })),
+  };
+}
+
 function Field({ children, label }: FieldProps): JSX.Element {
   return (
     <div className="grid gap-2">
@@ -215,16 +228,62 @@ function KeyValueEditor({ addLabel, entries, keyPlaceholder, onChange, valuePlac
   );
 }
 
-function SnippetCard({ title, description, configPath, value }: SnippetCardProps): JSX.Element {
+function renderHighlightedTemplate(value: string, placeholder: string): React.ReactNode {
+  if (!value) {
+    return <span className="text-zinc-400">{placeholder}</span>;
+  }
+
+  const parts = value.split(/(\{\{[\s\S]*?\}\})/g);
+
+  return parts.map((part, index) => {
+    if (!part) {
+      return null;
+    }
+
+    const isTemplateToken = /^\{\{[\s\S]*\}\}$/.test(part);
+    if (!isTemplateToken) {
+      return <span key={`text-${index}`}>{part}</span>;
+    }
+
+    return (
+      <span
+        key={`token-${index}`}
+        className="text-emerald-600"
+      >
+        {part}
+      </span>
+    );
+  });
+}
+
+function HighlightedTemplateInput({ onChange, placeholder, value }: HighlightedTemplateInputProps): JSX.Element {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useLayoutEffect(() => {
+    const textareaElement = textareaRef.current;
+    if (!textareaElement) {
+      return;
+    }
+
+    textareaElement.style.height = '0px';
+    textareaElement.style.height = `${Math.max(textareaElement.scrollHeight, TEMPLATE_INPUT_MIN_HEIGHT_PX)}px`;
+  }, [value]);
+
   return (
-    <article className="grid gap-2.5 rounded-xl border border-zinc-200 bg-white p-3">
-      <div className="grid gap-1">
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-600">{title}</h3>
-        <p className="text-xs leading-5 text-zinc-500">{description}</p>
-        <p className="font-mono text-xs text-zinc-400">{configPath}</p>
+    <div className="relative rounded-md border border-zinc-200 bg-white">
+      <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-md px-2.5 py-1 text-xs font-normal leading-6 tracking-normal text-zinc-950 whitespace-pre-wrap break-words">
+        {renderHighlightedTemplate(value, placeholder)}
       </div>
-      <Textarea className="min-h-[160px] font-mono text-xs leading-5" readOnly value={value} />
-    </article>
+      <textarea
+        ref={textareaRef}
+        className="relative z-10 block min-h-9 w-full resize-none overflow-hidden rounded-md bg-transparent px-2.5 py-1 text-xs font-normal leading-6 tracking-normal text-transparent caret-zinc-950 outline-none selection:bg-emerald-100/45 selection:text-transparent"
+        spellCheck={false}
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+        }}
+      />
+    </div>
   );
 }
 
@@ -278,8 +337,9 @@ export default function ConfigApp(): JSX.Element {
         return;
       }
 
-      setConfig(nextConfig);
-      setSelectedSourceId(nextConfig.sources[0]?.id ?? null);
+      const normalizedConfig = normalizeConfigForEditor(nextConfig);
+      setConfig(normalizedConfig);
+      setSelectedSourceId(normalizedConfig.sources[0]?.id ?? null);
       setIsLoading(false);
     }).catch((error) => {
       if (disposed) {
@@ -327,14 +387,6 @@ export default function ConfigApp(): JSX.Element {
   };
 
   const installStatuses = agentSetup?.installStatuses ?? [];
-  const supportedAgentLabels = installStatuses.length > 0
-    ? installStatuses.map((status) => status.title)
-    : Object.values(AGENT_TOOL_LABELS);
-  const snippetsBySource = (agentSetup?.snippets ?? []).reduce<Record<AgentTool, AgentHookSnippet[]>>((groups, snippet) => {
-    const existingSnippets = groups[snippet.source] ?? [];
-    groups[snippet.source] = [...existingSnippets, snippet];
-    return groups;
-  }, {} as Record<AgentTool, AgentHookSnippet[]>);
 
   const refreshAgentSetup = async (): Promise<AgentHookSetup> => {
     const nextSetup = await window.api.agent.getSetup();
@@ -343,22 +395,27 @@ export default function ConfigApp(): JSX.Element {
     return nextSetup;
   };
 
-  const handleManagedHookAction = async (source: AgentTool, mode: AgentAction['mode']): Promise<void> => {
-    setAgentAction({ source, mode });
+  const handleManagedHookAction = async (
+    source: AgentTool,
+    mode: AgentAction['mode'],
+    options?: AgentInstallManagedHooksOptions
+  ): Promise<void> => {
+    setAgentAction({ source, mode, variantId: options?.variantId });
     setAgentActionMessage(null);
     setAgentErrorMessage(null);
 
     try {
       const nextSetup = mode === 'install'
-        ? await window.api.agent.installManagedHooks(source)
+        ? await window.api.agent.installManagedHooks(source, options)
         : await window.api.agent.uninstallManagedHooks(source);
       setAgentSetup(nextSetup);
+      const nextStatus = nextSetup.installStatuses.find((status) => status.source === source);
       setAgentActionMessage(mode === 'install'
-        ? `已自动写入 ${AGENT_TOOL_LABELS[source]} 的 Hook 配置。`
-        : `已移除 ${AGENT_TOOL_LABELS[source]} 的受管 Hook 配置。`);
+        ? `${AGENT_TOOL_LABELS[source]}：${nextStatus?.statusMessage ?? '安装完成。'}`
+        : `${AGENT_TOOL_LABELS[source]} 已卸载。`);
     } catch (error) {
       await refreshAgentSetup().catch(() => undefined);
-      setAgentErrorMessage(error instanceof Error ? error.message : '更新 Agent Hook 配置失败。');
+      setAgentErrorMessage(error instanceof Error ? error.message : '更新 Agent Hook 状态失败。');
     } finally {
       setAgentAction(null);
     }
@@ -454,7 +511,7 @@ export default function ConfigApp(): JSX.Element {
         return;
       }
 
-      const savedConfig = await window.api.config.save(normalizedConfig);
+      const savedConfig = normalizeConfigForEditor(await window.api.config.save(normalizedConfig));
       setConfig(savedConfig);
       setSelectedSourceId(savedConfig.sources.find((source) => source.id === selectedSourceId)?.id ?? savedConfig.sources[0]?.id ?? null);
       setValidationError(null);
@@ -476,8 +533,8 @@ export default function ConfigApp(): JSX.Element {
 
   return (
     <main className="config-page">
-      <div className="mx-auto grid min-h-screen max-w-7xl gap-4 px-4 py-5 lg:grid-cols-[190px_minmax(0,1fr)] lg:px-5">
-        <aside className="flex min-h-full self-stretch border-r border-zinc-200 pr-2.5">
+      <div className="mx-auto grid min-h-screen max-w-7xl gap-4 px-4 py-5 lg:h-screen lg:grid-cols-[190px_minmax(0,1fr)] lg:overflow-hidden lg:px-5">
+        <aside className="flex min-h-full self-stretch border-r border-zinc-200 pr-2.5 lg:sticky lg:top-0 lg:h-[calc(100vh-2.5rem)] lg:self-start">
           <nav aria-label="Configuration tabs" className="grid w-full content-start gap-1 py-0.5">
             {TABS.map((tab) => (
               <button
@@ -501,63 +558,41 @@ export default function ConfigApp(): JSX.Element {
           </nav>
         </aside>
 
-        <section className="space-y-5">
-          {validationError ? <div className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] text-red-700">{validationError}</div> : null}
-          {saveMessage ? <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-[11px] text-zinc-700">{saveMessage}</div> : null}
-
+        <section className="space-y-5 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
           {activeTab === 'agent' ? (
             <div className="space-y-5">
+              {validationError ? <div className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] text-red-700">{validationError}</div> : null}
+              {saveMessage ? <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-[11px] text-zinc-700">{saveMessage}</div> : null}
+
               <section className="grid gap-4 rounded-xl border border-zinc-200 bg-white p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="grid gap-1">
                     <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">Agent Hook Bridge</h2>
-                    <p className="max-w-2xl text-xs leading-5 text-zinc-600">
-                      这里直接按 `open-vibe-island` 的接入思路做自动安装：每个 Agent 都可以单独安装 / 卸载受管 hook，配置文件会自动备份；如果你更想手动维护，下面也保留了对应片段。
-                    </p>
                   </div>
-                  <span className={cn(
-                    'inline-flex items-center rounded-full px-3 py-1 text-[10px] font-medium',
-                    agentSetup?.isServerRunning ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                  )}>
-                    {agentSetup?.isServerRunning ? 'Bridge 运行中' : 'Bridge 未就绪'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={cn(
+                      'inline-flex items-center rounded-full px-3 py-1 text-[10px] font-medium',
+                      agentSetup?.isServerRunning ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                    )}>
+                      {agentSetup?.isServerRunning ? 'Bridge 运行中' : 'Bridge 未就绪'}
+                    </span>
+                    <Button
+                      className="h-8 px-3 text-xs"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        void refreshAgentSetup().catch((error) => {
+                          setAgentErrorMessage(error instanceof Error ? error.message : '刷新 Agent Hook 状态失败。');
+                        });
+                      }}
+                    >
+                      刷新状态
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
                   <p>{agentSetup?.statusMessage ?? '等待主进程提供 Hook bridge 状态。'}</p>
-                  <p>Bridge 脚本：{agentSetup?.bridgeScriptPath ?? '尚未生成'}</p>
-                  <p>运行时配置：{agentSetup?.runtimeEnvPath ?? '尚未生成'}</p>
-                  {agentSetup?.endpointBaseUrl ? <p>当前端点：{agentSetup.endpointBaseUrl}</p> : null}
-                </div>
-
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">已接入 Agents</h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {supportedAgentLabels.map((label) => (
-                        <span key={label} className="inline-flex min-h-8 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-center text-[11px] leading-none text-zinc-600">
-                          {label}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">已接入终端 / IDE 跳转</h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {SUPPORTED_TERMINAL_LABELS.map((label) => (
-                        <span key={label} className="inline-flex min-h-8 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-center text-[11px] leading-none text-zinc-600">
-                          {label}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-2 text-xs leading-5 text-zinc-500">
-                  <p>1. 点击安装后，会直接写入各自工具的真实配置文件，并只管理 Agent Island 自己插入的 hook。</p>
-                  <p>2. 卸载时会尽量只移除受管段落，保留你原本已有的自定义 hooks。</p>
-                  <p>3. Codex 会一并处理 `~/.codex/config.toml` 里的 `codex_hooks = true`，不用再手动补。</p>
-                  <p>4. Codex、Claude-compatible、Cursor、Kimi 这些阻塞式 hook 会在岛上接管同意 / 拒绝；Gemini 仍是状态同步型通知。</p>
                 </div>
               </section>
 
@@ -574,68 +609,79 @@ export default function ConfigApp(): JSX.Element {
               ) : null}
 
               <section className="grid gap-4 rounded-xl border border-zinc-200 bg-white p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="grid gap-1">
-                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">自动安装</h2>
-                    <p className="max-w-2xl text-xs leading-5 text-zinc-600">
-                      按 Agent 单独安装，避免无端在你的 home 目录创建一堆并不用的配置目录；如果某个工具只装了一半，也会在这里明确提示你重新安装一次。
-                    </p>
-                  </div>
-                  <Button
-                    className="h-8 px-3 text-xs"
-                    size="sm"
-                    variant="outline"
-                    disabled={agentAction !== null}
-                    onClick={() => {
-                      void refreshAgentSetup().catch((error) => {
-                        setAgentErrorMessage(error instanceof Error ? error.message : '刷新 Agent Hook 状态失败。');
-                      });
-                    }}
-                  >
-                    刷新状态
-                  </Button>
+                <div className="grid gap-1">
+                  <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">Agent Hook 状态</h2>
                 </div>
 
                 {installStatuses.length > 0 ? (
                   <div className="grid gap-3 xl:grid-cols-2">
                     {installStatuses.map((status) => {
                       const badge = getInstallStateBadge(status);
-                      const snippets = snippetsBySource[status.source] ?? [];
                       const isBusy = agentAction?.source === status.source;
 
                       return (
-                        <article key={status.source} className="grid gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                        <section key={status.source} className="grid gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
                           <div className="flex items-start justify-between gap-3">
                             <div className="grid gap-1">
-                              <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-600">{status.title}</h3>
-                              <p className="text-xs leading-5 text-zinc-500">{status.statusMessage}</p>
+                              <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-600">
+                                {AGENT_TOOL_LABELS[status.source]}
+                              </h3>
+                              {status.source === 'codex' ? (
+                                <p className="text-[11px] text-zinc-500">{status.statusMessage}</p>
+                              ) : null}
                             </div>
                             <span className={cn('inline-flex items-center rounded-full px-3 py-1 text-[10px] font-medium', badge.className)}>
                               {badge.label}
                             </span>
                           </div>
 
-                          <div className="grid gap-1.5 rounded-lg border border-zinc-200 bg-white p-3 text-xs text-zinc-600">
-                            <p className="font-medium text-zinc-700">配置文件</p>
-                            {status.configPaths.map((configPath) => (
-                              <p key={configPath} className="font-mono text-[10px] text-zinc-500">{configPath}</p>
-                            ))}
-                            {status.errorMessage ? (
-                              <p className="text-red-600">{status.errorMessage}</p>
-                            ) : null}
-                          </div>
+                          {status.errorMessage ? (
+                            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">
+                              {status.errorMessage}
+                            </div>
+                          ) : null}
 
                           <div className="flex flex-wrap gap-2">
-                            <Button
-                              className="h-8 px-3 text-xs"
-                              size="sm"
-                              disabled={agentAction !== null}
-                              onClick={() => {
-                                void handleManagedHookAction(status.source, 'install');
-                              }}
-                            >
-                              {isBusy && agentAction?.mode === 'install' ? '安装中...' : '安装'}
-                            </Button>
+                            {status.source === 'codex' ? (
+                              <>
+                                <Button
+                                  className="h-8 px-3 text-xs"
+                                  size="sm"
+                                  disabled={agentAction !== null}
+                                  onClick={() => {
+                                    void handleManagedHookAction(status.source, 'install', { variantId: 'standard' });
+                                  }}
+                                >
+                                  {isBusy && agentAction?.mode === 'install' && agentAction.variantId === 'standard'
+                                    ? '安装中...'
+                                    : '安装标准版'}
+                                </Button>
+                                <Button
+                                  className="h-8 px-3 text-xs"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={agentAction !== null}
+                                  onClick={() => {
+                                    void handleManagedHookAction(status.source, 'install', { variantId: 'no-pretooluse' });
+                                  }}
+                                >
+                                  {isBusy && agentAction?.mode === 'install' && agentAction.variantId === 'no-pretooluse'
+                                    ? '安装中...'
+                                    : '安装无 PreToolUse 版'}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                className="h-8 px-3 text-xs"
+                                size="sm"
+                                disabled={agentAction !== null}
+                                onClick={() => {
+                                  void handleManagedHookAction(status.source, 'install');
+                                }}
+                              >
+                                {isBusy && agentAction?.mode === 'install' ? '安装中...' : '安装'}
+                              </Button>
+                            )}
                             <Button
                               className="h-8 px-3 text-xs"
                               size="sm"
@@ -648,32 +694,13 @@ export default function ConfigApp(): JSX.Element {
                               {isBusy && agentAction?.mode === 'uninstall' ? '卸载中...' : '卸载'}
                             </Button>
                           </div>
-
-                          {snippets.length > 0 ? (
-                            <details className="rounded-lg border border-zinc-200 bg-white p-3">
-                              <summary className="cursor-pointer list-none text-[11px] font-medium text-zinc-700">
-                                查看手动配置片段
-                              </summary>
-                              <div className="mt-3 grid gap-3">
-                                {snippets.map((snippet) => (
-                                  <SnippetCard
-                                    key={snippet.id}
-                                    title={snippet.title}
-                                    description={snippet.description}
-                                    configPath={snippet.configPath}
-                                    value={snippet.value}
-                                  />
-                                ))}
-                              </div>
-                            </details>
-                          ) : null}
-                        </article>
+                        </section>
                       );
                     })}
                   </div>
                 ) : (
                   <div className="grid min-h-[160px] place-items-center rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 text-[11px] text-zinc-500">
-                    还没有可用的自动安装状态。
+                    还没有可用的 Agent Hook 状态。
                   </div>
                 )}
               </section>
@@ -684,88 +711,93 @@ export default function ConfigApp(): JSX.Element {
             </div>
           ) : (
             <div className="space-y-5">
-              <section className="space-y-2">
-                <div className="flex items-start justify-between gap-3">
-                  <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">请求列表</h2>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      className="h-8 w-8"
-                      size="icon"
-                      variant="outline"
-                      aria-label="添加轮询请求"
-                      onClick={addPollingSource}
-                    >
-                      <Plus className="h-3 w-3" />
-                    </Button>
-                    <Button className="h-8 px-3 text-xs" size="sm" disabled={isSaving} onClick={() => void handleSave()}>
-                      {isSaving ? '保存中...' : '保存'}
-                    </Button>
+              <div className="sticky top-0 z-10 space-y-5 bg-[#fafafa] pb-4">
+                {validationError ? <div className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] text-red-700">{validationError}</div> : null}
+                {saveMessage ? <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-[11px] text-zinc-700">{saveMessage}</div> : null}
+
+                <section className="space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">请求列表</h2>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        className="h-8 w-8"
+                        size="icon"
+                        variant="outline"
+                        aria-label="添加轮询请求"
+                        onClick={addPollingSource}
+                      >
+                        <Plus className="h-3 w-3" />
+                      </Button>
+                      <Button className="h-8 px-3 text-xs" size="sm" disabled={isSaving} onClick={() => void handleSave()}>
+                        {isSaving ? '保存中...' : '保存'}
+                      </Button>
+                    </div>
                   </div>
-                </div>
 
-                {config.sources.length > 0 ? (
-                  <div className="flex flex-wrap gap-1" role="tablist" aria-label="轮询请求列表">
-                    {config.sources.map((source, index) => {
-                      const isSelected = selectedSourceId === source.id;
-                      const isDeletePending = pendingDeleteSourceId === source.id;
+                  {config.sources.length > 0 ? (
+                    <div className="flex flex-wrap gap-1" role="tablist" aria-label="轮询请求列表">
+                      {config.sources.map((source, index) => {
+                        const isSelected = selectedSourceId === source.id;
+                        const isDeletePending = pendingDeleteSourceId === source.id;
 
-                      return (
-                        <div
-                          key={source.id}
-                          className={cn(
-                            'inline-flex items-center overflow-hidden rounded-md border bg-white text-[11px] transition-colors',
-                            isSelected ? 'border-zinc-300 text-zinc-950 shadow-sm' : 'border-zinc-200 text-zinc-700'
-                          )}
-                        >
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={isSelected}
+                        return (
+                          <div
+                            key={source.id}
                             className={cn(
-                              'flex h-8 items-center gap-1.5 px-3 transition-colors',
-                              isSelected ? 'bg-zinc-50 text-zinc-950' : 'hover:bg-zinc-100 hover:text-zinc-950'
+                              'inline-flex items-center overflow-hidden rounded-md border bg-white text-[11px] transition-colors',
+                              isSelected ? 'border-zinc-300 text-zinc-950 shadow-sm' : 'border-zinc-200 text-zinc-700'
                             )}
-                            onClick={() => {
-                              setSelectedSourceId(source.id);
-                            }}
                           >
-                            <span
-                              aria-hidden="true"
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={isSelected}
                               className={cn(
-                                'h-1.5 w-1.5 rounded-full transition-colors',
-                                isSelected ? 'bg-green-500' : 'bg-zinc-300'
+                                'flex h-8 items-center gap-1.5 px-3 transition-colors',
+                                isSelected ? 'bg-zinc-50 text-zinc-950' : 'hover:bg-zinc-100 hover:text-zinc-950'
                               )}
-                            />
-                            <span>{formatRequestLabel(source, index)}</span>
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={isDeletePending ? `确认删除 ${formatRequestLabel(source, index)}` : `删除 ${formatRequestLabel(source, index)}`}
-                            className={cn(
-                              'flex h-8 min-w-8 items-center justify-center border-l border-zinc-200 px-2.5 text-red-600 transition-colors hover:text-red-700',
-                              isDeletePending ? 'bg-red-50 font-medium' : 'hover:bg-red-50'
-                            )}
-                            onClick={() => {
-                              if (isDeletePending) {
-                                removeSource(source.id);
-                                return;
-                              }
+                              onClick={() => {
+                                setSelectedSourceId(source.id);
+                              }}
+                            >
+                              <span
+                                aria-hidden="true"
+                                className={cn(
+                                  'h-1.5 w-1.5 rounded-full transition-colors',
+                                  isSelected ? 'bg-green-500' : 'bg-zinc-300'
+                                )}
+                              />
+                              <span>{formatRequestLabel(source, index)}</span>
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={isDeletePending ? `确认删除 ${formatRequestLabel(source, index)}` : `删除 ${formatRequestLabel(source, index)}`}
+                              className={cn(
+                                'flex h-8 min-w-8 items-center justify-center border-l border-zinc-200 px-2.5 text-red-600 transition-colors hover:text-red-700',
+                                isDeletePending ? 'bg-red-50 font-medium' : 'hover:bg-red-50'
+                              )}
+                              onClick={() => {
+                                if (isDeletePending) {
+                                  removeSource(source.id);
+                                  return;
+                                }
 
-                              setPendingDeleteSourceId(source.id);
-                            }}
-                          >
-                            {isDeletePending ? '确认' : <Trash2 className="h-3.5 w-3.5" />}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="grid min-h-[72px] place-items-center rounded-md border border-dashed border-zinc-200 bg-zinc-50 px-3 text-[11px] text-zinc-500">
-                    还没有轮询请求，点击右上角加号创建。
-                  </div>
-                )}
-              </section>
+                                setPendingDeleteSourceId(source.id);
+                              }}
+                            >
+                              {isDeletePending ? '确认' : <Trash2 className="h-3.5 w-3.5" />}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="grid min-h-[72px] place-items-center rounded-md border border-dashed border-zinc-200 bg-zinc-50 px-3 text-[11px] text-zinc-500">
+                      还没有轮询请求，点击右上角加号创建。
+                    </div>
+                  )}
+                </section>
+              </div>
 
               {selectedSource ? (
                 <>
@@ -874,13 +906,27 @@ export default function ConfigApp(): JSX.Element {
                             <Textarea
                               className="text-xs leading-5"
                               value={selectedSource.request.body ?? ''}
-                              placeholder='例如：{ "env": "prod" }'
+                              placeholder={'{\n  "env": "prod"\n}'}
                               onChange={(event) => {
                                 applyConfig(updateSource(config, selectedSource.id, (source) => ({
                                   ...source,
                                   request: {
                                     ...source.request,
                                     body: event.target.value,
+                                  },
+                                })));
+                              }}
+                              onBlur={(event) => {
+                                const formattedBody = formatJsonString(event.target.value);
+                                if (formattedBody === event.target.value) {
+                                  return;
+                                }
+
+                                applyConfig(updateSource(config, selectedSource.id, (source) => ({
+                                  ...source,
+                                  request: {
+                                    ...source.request,
+                                    body: formattedBody,
                                   },
                                 })));
                               }}
@@ -895,16 +941,15 @@ export default function ConfigApp(): JSX.Element {
                     <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">字段映射</h2>
                     <div className="grid gap-4">
                       <Field label="标题">
-                        <Input
-                          className="h-9 text-xs file:text-xs"
+                        <HighlightedTemplateInput
                           value={selectedSource.fieldMappings.title}
                           placeholder="请填写，如 {{ $data.label.trim() }}"
-                          onChange={(event) => {
+                          onChange={(value) => {
                             applyConfig(updateSource(config, selectedSource.id, (source) => ({
                               ...source,
                               fieldMappings: {
                                 ...source.fieldMappings,
-                                title: event.target.value,
+                                title: value,
                               },
                             })));
                           }}
@@ -912,16 +957,15 @@ export default function ConfigApp(): JSX.Element {
                       </Field>
 
                       <Field label="结果">
-                        <Input
-                          className="h-9 text-xs file:text-xs"
+                        <HighlightedTemplateInput
                           value={selectedSource.fieldMappings.summary ?? ''}
                           placeholder="请填写，如 {{ $data.value.toFixed(2) }}"
-                          onChange={(event) => {
+                          onChange={(value) => {
                             applyConfig(updateSource(config, selectedSource.id, (source) => ({
                               ...source,
                               fieldMappings: {
                                 ...source.fieldMappings,
-                                summary: event.target.value,
+                                summary: value,
                               },
                             })));
                           }}
@@ -929,16 +973,15 @@ export default function ConfigApp(): JSX.Element {
                       </Field>
 
                       <Field label="详情">
-                        <Input
-                          className="h-9 text-xs file:text-xs"
+                        <HighlightedTemplateInput
                           value={selectedSource.fieldMappings.detail ?? ''}
                           placeholder="请填写，如 {{ $data.label.trim() }}"
-                          onChange={(event) => {
+                          onChange={(value) => {
                             applyConfig(updateSource(config, selectedSource.id, (source) => ({
                               ...source,
                               fieldMappings: {
                                 ...source.fieldMappings,
-                                detail: event.target.value,
+                                detail: value,
                               },
                             })));
                           }}

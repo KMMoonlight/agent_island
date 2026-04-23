@@ -1,6 +1,7 @@
-import type { AgentApprovalDecision, AgentOverlayState } from '@shared/types/agent-hook';
+import type { AgentApprovalDecision, AgentOverlayState, AgentQuestionResponse } from '@shared/types/agent-hook';
 import type { OverlayState } from '@shared/types/source-data';
 
+import { AgentQuestionCard } from './AgentQuestionCard';
 import { AgentReminderCard } from './AgentReminderCard';
 import { SourcePanel } from './SourcePanel';
 
@@ -9,12 +10,14 @@ type IslandExpandedProps = {
   onOpenTarget: (targetUrl: string | undefined) => void;
   onJumpToSession: (sessionId: string | undefined) => void;
   onResolveApproval: (sessionId: string | undefined, decision: AgentApprovalDecision) => void;
+  onAnswerQuestion: (sessionId: string | undefined, response: AgentQuestionResponse) => void;
 };
 
 function renderAgentSection(
   agentState: AgentOverlayState,
   onJumpToSession: (sessionId: string | undefined) => void,
-  onResolveApproval: (sessionId: string | undefined, decision: AgentApprovalDecision) => void
+  onResolveApproval: (sessionId: string | undefined, decision: AgentApprovalDecision) => void,
+  onAnswerQuestion: (sessionId: string | undefined, response: AgentQuestionResponse) => void
 ): JSX.Element | null {
   if (!agentState.activeReminder) {
     return null;
@@ -24,14 +27,24 @@ function renderAgentSection(
 
   return (
     <div className="agent-feed">
-      <AgentReminderCard
-        reminder={agentState.activeReminder}
-        session={reminderSession}
-        onJumpToSession={onJumpToSession}
-        onResolveApproval={(sessionId, decision) => {
-          onResolveApproval(sessionId, decision);
-        }}
-      />
+      {reminderSession?.phase === 'needs-answer' && reminderSession.questionPrompt ? (
+        <AgentQuestionCard
+          reminder={agentState.activeReminder}
+          session={reminderSession}
+          onAnswerQuestion={(sessionId, response) => {
+            onAnswerQuestion(sessionId, response);
+          }}
+        />
+      ) : (
+        <AgentReminderCard
+          reminder={agentState.activeReminder}
+          session={reminderSession}
+          onJumpToSession={onJumpToSession}
+          onResolveApproval={(sessionId, decision) => {
+            onResolveApproval(sessionId, decision);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -55,13 +68,20 @@ function renderSourceSection(
   );
 }
 
-export function IslandExpanded({ state, onOpenTarget, onJumpToSession, onResolveApproval }: IslandExpandedProps): JSX.Element {
-  const agentSection = renderAgentSection(state.agent, onJumpToSession, onResolveApproval);
+export function IslandExpanded({
+  state,
+  onOpenTarget,
+  onJumpToSession,
+  onResolveApproval,
+  onAnswerQuestion,
+}: IslandExpandedProps): JSX.Element {
+  const agentSection = renderAgentSection(state.agent, onJumpToSession, onResolveApproval, onAnswerQuestion);
   const sourceSection = state.agent.activeReminder ? null : renderSourceSection(state, onOpenTarget);
   const gridClassName = sourceSection ? 'island__expanded-grid' : 'island__expanded-grid island__expanded-grid--agent-only';
+  const stageClassName = sourceSection ? 'island__expanded-stage' : 'island__expanded-stage island__expanded-stage--agent-only';
 
   return (
-    <div className="island__expanded-stage">
+    <div className={stageClassName}>
       <div className={gridClassName}>
         {agentSection}
         {sourceSection}

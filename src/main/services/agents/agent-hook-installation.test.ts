@@ -95,6 +95,28 @@ describe('AgentHookInstallationManager', () => {
     });
   });
 
+  it('installs Codex without PreToolUse when requested', async () => {
+    const homeDirectory = createTempHome();
+    const codexDirectory = path.join(homeDirectory, '.codex');
+    mkdirSync(codexDirectory, { recursive: true });
+
+    const { AgentHookInstallationManager } = await loadInstallationModule(homeDirectory);
+    const bridgeScriptPath = path.join(homeDirectory, 'agent-hook-bridge.sh');
+    const manager = new AgentHookInstallationManager(bridgeScriptPath);
+    const hooksPath = path.join(codexDirectory, 'hooks.json');
+
+    const installStatuses = manager.install('codex', { variantId: 'no-pretooluse' });
+    const installStatus = installStatuses.find((status) => status.source === 'codex');
+    expect(installStatus?.isInstalled).toBe(true);
+    expect(installStatus?.statusMessage).toContain('不含 PreToolUse');
+
+    const installedHooks = JSON.stringify(readJsonFile(hooksPath));
+    expect(installedHooks).toContain('SessionStart');
+    expect(installedHooks).toContain('UserPromptSubmit');
+    expect(installedHooks).toContain('Stop');
+    expect(installedHooks).not.toContain('PreToolUse');
+  });
+
   it('installs and uninstalls Claude-compatible hooks without dropping user entries', async () => {
     const homeDirectory = createTempHome();
     const claudeDirectory = path.join(homeDirectory, '.claude');
