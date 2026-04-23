@@ -8,13 +8,38 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import {
+  AGENT_TOOL_LABELS,
+  type AgentHookInstallStatus,
+  type AgentHookSetup,
+  type AgentHookSnippet,
+  type AgentTool,
+} from '@shared/types/agent-hook';
 import type { AppConfig, RequestEntry, RequestMethod, SourceConfig } from '@shared/types/config';
 
 const REQUEST_METHODS: RequestMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+const SUPPORTED_TERMINAL_LABELS = [
+  'Terminal.app',
+  'iTerm2',
+  'Ghostty',
+  'Warp（仅激活）',
+  'cmux',
+  'tmux',
+  'Zellij',
+  'WezTerm',
+  'Kaku',
+  'VS Code',
+  'VS Code Insiders',
+  'Cursor',
+  'Windsurf',
+  'Trae',
+  'JetBrains IDEs',
+  'Codex.app',
+];
 const TABS = [
   { id: 'scheduled', label: '定时任务', disabled: true },
   { id: 'polling', label: '轮询请求', disabled: false },
-  { id: 'agent', label: 'Agent交互', disabled: true },
+  { id: 'agent', label: 'Agent交互', disabled: false },
 ] as const;
 const EMPTY_ENTRY: RequestEntry = { key: '', value: '' };
 
@@ -31,6 +56,18 @@ type KeyValueEditorProps = {
 type FieldProps = {
   children: React.ReactNode;
   label: string;
+};
+
+type AgentAction = {
+  mode: 'install' | 'uninstall';
+  source: AgentTool;
+};
+
+type SnippetCardProps = {
+  title: string;
+  description: string;
+  configPath: string;
+  value: string;
 };
 
 function createBlankSource(): SourceConfig {
@@ -175,9 +212,55 @@ function KeyValueEditor({ addLabel, entries, keyPlaceholder, onChange, valuePlac
   );
 }
 
+function SnippetCard({ title, description, configPath, value }: SnippetCardProps): JSX.Element {
+  return (
+    <article className="grid gap-2.5 rounded-xl border border-zinc-200 bg-white p-3">
+      <div className="grid gap-1">
+        <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-600">{title}</h3>
+        <p className="text-[10px] leading-5 text-zinc-500">{description}</p>
+        <p className="font-mono text-[10px] text-zinc-400">{configPath}</p>
+      </div>
+      <Textarea className="min-h-[160px] font-mono text-[10px] leading-5" readOnly value={value} />
+    </article>
+  );
+}
+
+function getInstallStateBadge(status: AgentHookInstallStatus): { className: string; label: string } {
+  if (status.errorMessage) {
+    return {
+      className: 'bg-red-50 text-red-700',
+      label: '读取失败',
+    };
+  }
+
+  if (status.isInstalled) {
+    return {
+      className: 'bg-emerald-50 text-emerald-700',
+      label: '已安装',
+    };
+  }
+
+  if (status.isPartiallyInstalled) {
+    return {
+      className: 'bg-amber-50 text-amber-700',
+      label: '部分安装',
+    };
+  }
+
+  return {
+    className: 'bg-zinc-100 text-zinc-600',
+    label: '未安装',
+  };
+}
+
 export default function ConfigApp(): JSX.Element {
   const [config, setConfig] = useState<AppConfig | null>(null);
+  const [agentSetup, setAgentSetup] = useState<AgentHookSetup | null>(null);
+  const [agentAction, setAgentAction] = useState<AgentAction | null>(null);
+  const [agentActionMessage, setAgentActionMessage] = useState<string | null>(null);
+  const [agentErrorMessage, setAgentErrorMessage] = useState<string | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const [pendingDeleteSourceId, setPendingDeleteSourceId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ConfigTabId>('polling');
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -204,6 +287,20 @@ export default function ConfigApp(): JSX.Element {
       setIsLoading(false);
     });
 
+    void window.api.agent.getSetup().then((nextSetup) => {
+      if (disposed) {
+        return;
+      }
+
+      setAgentSetup(nextSetup);
+      setAgentErrorMessage(null);
+    }).catch(() => {
+      if (!disposed) {
+        setAgentSetup(null);
+        setAgentErrorMessage('读取 Agent Hook 配置失败。');
+      }
+    });
+
     return () => {
       disposed = true;
     };
@@ -222,7 +319,46 @@ export default function ConfigApp(): JSX.Element {
     if (!selectedSourceId || !nextConfig.sources.some((source) => source.id === selectedSourceId)) {
       setSelectedSourceId(nextConfig.sources[0]?.id ?? null);
     }
+    setPendingDeleteSourceId(null);
     setSaveMessage(null);
+  };
+
+  const installStatuses = agentSetup?.installStatuses ?? [];
+  const supportedAgentLabels = installStatuses.length > 0
+    ? installStatuses.map((status) => status.title)
+    : Object.values(AGENT_TOOL_LABELS);
+  const snippetsBySource = (agentSetup?.snippets ?? []).reduce<Record<AgentTool, AgentHookSnippet[]>>((groups, snippet) => {
+    const existingSnippets = groups[snippet.source] ?? [];
+    groups[snippet.source] = [...existingSnippets, snippet];
+    return groups;
+  }, {} as Record<AgentTool, AgentHookSnippet[]>);
+
+  const refreshAgentSetup = async (): Promise<AgentHookSetup> => {
+    const nextSetup = await window.api.agent.getSetup();
+    setAgentSetup(nextSetup);
+    setAgentErrorMessage(null);
+    return nextSetup;
+  };
+
+  const handleManagedHookAction = async (source: AgentTool, mode: AgentAction['mode']): Promise<void> => {
+    setAgentAction({ source, mode });
+    setAgentActionMessage(null);
+    setAgentErrorMessage(null);
+
+    try {
+      const nextSetup = mode === 'install'
+        ? await window.api.agent.installManagedHooks(source)
+        : await window.api.agent.uninstallManagedHooks(source);
+      setAgentSetup(nextSetup);
+      setAgentActionMessage(mode === 'install'
+        ? `已自动写入 ${AGENT_TOOL_LABELS[source]} 的 Hook 配置。`
+        : `已移除 ${AGENT_TOOL_LABELS[source]} 的受管 Hook 配置。`);
+    } catch (error) {
+      await refreshAgentSetup().catch(() => undefined);
+      setAgentErrorMessage(error instanceof Error ? error.message : '更新 Agent Hook 配置失败。');
+    } finally {
+      setAgentAction(null);
+    }
   };
 
   const addPollingSource = (): void => {
@@ -235,19 +371,12 @@ export default function ConfigApp(): JSX.Element {
       ...config,
       sources: [...config.sources, nextSource],
     });
+    setPendingDeleteSourceId(null);
     setSelectedSourceId(nextSource.id);
   };
 
   const removeSource = (sourceId: string): void => {
     if (!config) {
-      return;
-    }
-
-    const source = config.sources.find((item) => item.id === sourceId);
-    const sourceLabel = source ? source.name.trim() || '未命名请求' : '该请求';
-    const confirmed = window.confirm(`确认删除“${sourceLabel}”吗？`);
-
-    if (!confirmed) {
       return;
     }
 
@@ -373,7 +502,177 @@ export default function ConfigApp(): JSX.Element {
           {validationError ? <div className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-[10px] text-red-700">{validationError}</div> : null}
           {saveMessage ? <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-[10px] text-zinc-700">{saveMessage}</div> : null}
 
-          {activeTab !== 'polling' ? (
+          {activeTab === 'agent' ? (
+            <div className="space-y-5">
+              <section className="grid gap-4 rounded-xl border border-zinc-200 bg-white p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="grid gap-1">
+                    <h2 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">Agent Hook Bridge</h2>
+                    <p className="max-w-2xl text-[10px] leading-5 text-zinc-600">
+                      这里直接按 `open-vibe-island` 的接入思路做自动安装：每个 Agent 都可以单独安装 / 卸载受管 hook，配置文件会自动备份；如果你更想手动维护，下面也保留了对应片段。
+                    </p>
+                  </div>
+                  <span className={cn(
+                    'inline-flex items-center rounded-full px-2.5 py-1 text-[9px] font-medium',
+                    agentSetup?.isServerRunning ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                  )}>
+                    {agentSetup?.isServerRunning ? 'Bridge 运行中' : 'Bridge 未就绪'}
+                  </span>
+                </div>
+
+                <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-[10px] text-zinc-600">
+                  <p>{agentSetup?.statusMessage ?? '等待主进程提供 Hook bridge 状态。'}</p>
+                  <p>Bridge 脚本：{agentSetup?.bridgeScriptPath ?? '尚未生成'}</p>
+                  <p>运行时配置：{agentSetup?.runtimeEnvPath ?? '尚未生成'}</p>
+                  {agentSetup?.endpointBaseUrl ? <p>当前端点：{agentSetup.endpointBaseUrl}</p> : null}
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                    <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">已接入 Agents</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {supportedAgentLabels.map((label) => (
+                        <span key={label} className="inline-flex min-h-7 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-center text-[9px] leading-none text-zinc-600">
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                    <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">已接入终端 / IDE 跳转</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SUPPORTED_TERMINAL_LABELS.map((label) => (
+                        <span key={label} className="inline-flex min-h-7 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-center text-[9px] leading-none text-zinc-600">
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-2 text-[10px] leading-5 text-zinc-500">
+                  <p>1. 点击安装后，会直接写入各自工具的真实配置文件，并只管理 Agent Island 自己插入的 hook。</p>
+                  <p>2. 卸载时会尽量只移除受管段落，保留你原本已有的自定义 hooks。</p>
+                  <p>3. Codex 会一并处理 `~/.codex/config.toml` 里的 `codex_hooks = true`，不用再手动补。</p>
+                  <p>4. Codex、Claude-compatible、Cursor、Kimi 这些阻塞式 hook 会在岛上接管同意 / 拒绝；Gemini 仍是状态同步型通知。</p>
+                </div>
+              </section>
+
+              {agentErrorMessage ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] text-red-700">
+                  {agentErrorMessage}
+                </div>
+              ) : null}
+
+              {agentActionMessage ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] text-emerald-700">
+                  {agentActionMessage}
+                </div>
+              ) : null}
+
+              <section className="grid gap-4 rounded-xl border border-zinc-200 bg-white p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="grid gap-1">
+                    <h2 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">自动安装</h2>
+                    <p className="max-w-2xl text-[10px] leading-5 text-zinc-600">
+                      按 Agent 单独安装，避免无端在你的 home 目录创建一堆并不用的配置目录；如果某个工具只装了一半，也会在这里明确提示你重新安装一次。
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={agentAction !== null}
+                    onClick={() => {
+                      void refreshAgentSetup().catch((error) => {
+                        setAgentErrorMessage(error instanceof Error ? error.message : '刷新 Agent Hook 状态失败。');
+                      });
+                    }}
+                  >
+                    刷新状态
+                  </Button>
+                </div>
+
+                {installStatuses.length > 0 ? (
+                  <div className="grid gap-3 xl:grid-cols-2">
+                    {installStatuses.map((status) => {
+                      const badge = getInstallStateBadge(status);
+                      const snippets = snippetsBySource[status.source] ?? [];
+                      const isBusy = agentAction?.source === status.source;
+
+                      return (
+                        <article key={status.source} className="grid gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="grid gap-1">
+                              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-600">{status.title}</h3>
+                              <p className="text-[10px] leading-5 text-zinc-500">{status.statusMessage}</p>
+                            </div>
+                            <span className={cn('inline-flex items-center rounded-full px-2.5 py-1 text-[9px] font-medium', badge.className)}>
+                              {badge.label}
+                            </span>
+                          </div>
+
+                          <div className="grid gap-1.5 rounded-lg border border-zinc-200 bg-white p-3 text-[10px] text-zinc-600">
+                            <p className="font-medium text-zinc-700">配置文件</p>
+                            {status.configPaths.map((configPath) => (
+                              <p key={configPath} className="font-mono text-[9px] text-zinc-500">{configPath}</p>
+                            ))}
+                            {status.errorMessage ? (
+                              <p className="text-red-600">{status.errorMessage}</p>
+                            ) : null}
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              disabled={agentAction !== null}
+                              onClick={() => {
+                                void handleManagedHookAction(status.source, 'install');
+                              }}
+                            >
+                              {isBusy && agentAction?.mode === 'install' ? '安装中...' : '安装'}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={agentAction !== null || (!status.isInstalled && !status.isPartiallyInstalled)}
+                              onClick={() => {
+                                void handleManagedHookAction(status.source, 'uninstall');
+                              }}
+                            >
+                              {isBusy && agentAction?.mode === 'uninstall' ? '卸载中...' : '卸载'}
+                            </Button>
+                          </div>
+
+                          {snippets.length > 0 ? (
+                            <details className="rounded-lg border border-zinc-200 bg-white p-3">
+                              <summary className="cursor-pointer list-none text-[10px] font-medium text-zinc-700">
+                                查看手动配置片段
+                              </summary>
+                              <div className="mt-3 grid gap-3">
+                                {snippets.map((snippet) => (
+                                  <SnippetCard
+                                    key={snippet.id}
+                                    title={snippet.title}
+                                    description={snippet.description}
+                                    configPath={snippet.configPath}
+                                    value={snippet.value}
+                                  />
+                                ))}
+                              </div>
+                            </details>
+                          ) : null}
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="grid min-h-[160px] place-items-center rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 text-[10px] text-zinc-500">
+                    还没有可用的自动安装状态。
+                  </div>
+                )}
+              </section>
+            </div>
+          ) : activeTab !== 'polling' ? (
             <div className="grid min-h-[240px] place-items-center rounded-xl border border-zinc-200 bg-white px-4 text-[10px] text-zinc-500">
               该标签稍后开放。
             </div>
@@ -396,6 +695,7 @@ export default function ConfigApp(): JSX.Element {
                   <div className="flex flex-wrap gap-1" role="tablist" aria-label="轮询请求列表">
                     {config.sources.map((source, index) => {
                       const isSelected = selectedSourceId === source.id;
+                      const isDeletePending = pendingDeleteSourceId === source.id;
 
                       return (
                         <div
@@ -428,13 +728,21 @@ export default function ConfigApp(): JSX.Element {
                           </button>
                           <button
                             type="button"
-                            aria-label={`删除 ${formatRequestLabel(source, index)}`}
-                            className="flex h-7 w-7 items-center justify-center border-l border-zinc-200 text-red-600 transition-colors hover:bg-red-50 hover:text-red-700"
+                            aria-label={isDeletePending ? `确认删除 ${formatRequestLabel(source, index)}` : `删除 ${formatRequestLabel(source, index)}`}
+                            className={cn(
+                              'flex h-7 min-w-7 items-center justify-center border-l border-zinc-200 px-2 text-red-600 transition-colors hover:text-red-700',
+                              isDeletePending ? 'bg-red-50 font-medium' : 'hover:bg-red-50'
+                            )}
                             onClick={() => {
-                              removeSource(source.id);
+                              if (isDeletePending) {
+                                removeSource(source.id);
+                                return;
+                              }
+
+                              setPendingDeleteSourceId(source.id);
                             }}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            {isDeletePending ? '确认' : <Trash2 className="h-3.5 w-3.5" />}
                           </button>
                         </div>
                       );

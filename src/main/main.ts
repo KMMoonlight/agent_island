@@ -7,11 +7,14 @@ import fs from 'node:fs';
 import { app, BrowserWindow } from 'electron';
 
 import { IPC_CHANNELS } from '../shared/constants/channels';
+import { APP_CONFIG } from '../shared/constants/config';
 import type { OverlayWindowMode } from '../shared/types/ipc';
+import { registerAgentHandlers } from './ipc/agent.handler';
 import { registerAppControlHandlers } from './ipc/app-control.handler';
 import { registerConfigHandlers } from './ipc/config.handler';
 import { registerOverlayHandlers } from './ipc/overlay.handler';
 import { logger as baseLogger } from './services/logger';
+import { AgentHookService } from './services/agents/agent-hook-service';
 import { ConfigService } from './services/config/config-service';
 import { SourcePoller } from './services/sources/source-poller';
 import { SourceStore } from './services/state/source-store';
@@ -21,12 +24,14 @@ import { createConfigWindow } from './windows/config-window';
 import { createOverlayHost } from './windows/create-overlay-host';
 import type { OverlayContentHost } from './windows/overlay-content-host';
 import type { OverlayHost, OverlayHostBridge, OverlayRendererTarget } from './windows/overlay-host';
+import { jumpToTerminalWindow } from './utils/jump-to-terminal';
 import { openExternalTarget } from './utils/open-external';
 
 const logger = baseLogger.scope('main');
 const configService = new ConfigService();
 const sourceStore = new SourceStore();
 const sourcePoller = new SourcePoller(configService, sourceStore);
+const agentHookService = new AgentHookService(sourceStore);
 const trayMenu = new TrayMenu({
   onRefreshSources: () => {
     void refreshSources();
@@ -38,6 +43,7 @@ const trayMenu = new TrayMenu({
 
 let overlayHost: OverlayHost | null = null;
 let overlayWindowMode: OverlayWindowMode = 'compact';
+let expandedContentHeight: number = APP_CONFIG.window.expandedHeight;
 
 function clearMacOsSavedState(): void {
   if (process.platform !== 'darwin') {
@@ -113,8 +119,24 @@ const overlayHostBridge: OverlayHostBridge = {
     sourcePoller.reload();
     return sourceStore.getState();
   },
+  getAgentSetup: () => agentHookService.getSetup(),
+  resolveAgentApproval: (sessionId, decision) => agentHookService.resolvePendingApproval(sessionId, decision),
   getAppStatus: () => sourceStore.getStatus(),
   openTarget: (targetUrl) => openExternalTarget(targetUrl),
+  jumpToAgentSession: async (sessionId) => {
+    const session = sourceStore.getState().agent.sessions.find((item) => item.id === sessionId);
+    logger.info('Received agent session jump request', {
+      sessionId,
+      found: Boolean(session),
+      jumpTarget: session?.jumpTarget ?? null,
+    });
+    const didJump = await jumpToTerminalWindow(session?.jumpTarget);
+    logger.info('Completed agent session jump request', {
+      sessionId,
+      didJump,
+    });
+    return didJump;
+  },
   setOverlayExpanded: (expanded) => {
     overlayWindowMode = expanded ? 'expanded' : 'compact';
     logger.info('Received overlay mode change', {
@@ -128,6 +150,15 @@ const overlayHostBridge: OverlayHostBridge = {
     }
 
     return overlayHost.setMode(overlayWindowMode);
+  },
+  setExpandedContentHeight: (height) => {
+    expandedContentHeight = Math.max(APP_CONFIG.window.compactHeight, Math.min(APP_CONFIG.window.expandedHeight, Math.round(height)));
+
+    if (!overlayHost || overlayHost.isDestroyed()) {
+      return;
+    }
+
+    overlayHost.setExpandedContentHeight(expandedContentHeight);
   },
 };
 
@@ -150,6 +181,7 @@ async function createApp(): Promise<void> {
   broadcastOverlayMode(overlayWindowMode);
   logger.info('Creating app overlay host');
   overlayHost = createOverlayHost(loadRenderer, overlayHostBridge, getOverlayRendererTarget());
+  overlayHost.setExpandedContentHeight(expandedContentHeight);
   sourceStore.setOverlayHostKind(overlayHost.getStatus().active);
 
   try {
@@ -208,14 +240,17 @@ app.whenReady().then(async () => {
   clearMacOsSavedState();
   logger.info('Electron app ready');
   registerOverlayHandlers(sourceStore);
+  registerAgentHandlers(agentHookService);
   registerConfigHandlers(configService, sourcePoller);
   registerAppControlHandlers(sourceStore, {
     getOverlayMode: () => overlayWindowMode,
     setOverlayExpanded: (expanded) => overlayHostBridge.setOverlayExpanded(expanded),
+    setExpandedContentHeight: (height) => overlayHostBridge.setExpandedContentHeight(height),
   });
   wireStoreUpdates();
 
   sourcePoller.start();
+  await agentHookService.start();
   trayMenu.create(sourceStore.getStatus());
   await createApp();
 
@@ -235,6 +270,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   logger.info('Electron app before-quit');
+  agentHookService.stop();
   sourcePoller.stop();
 });
 

@@ -1,5 +1,6 @@
 import type { AppConfig } from '../../shared/types/config';
 import type { AppStatus, OverlayHostKind, OverlayWindowMode, ConfigValidationResult } from '../../shared/types/ipc';
+import type { AgentApprovalDecision, AgentHookSetup } from '../../shared/types/agent-hook';
 import type { OverlayState } from '../../shared/types/source-data';
 
 export type OverlayHostWindowMode = 'compact' | 'expanded';
@@ -20,9 +21,13 @@ export type OverlayHostBridge = {
   saveConfig: (config: AppConfig) => Promise<AppConfig>;
   validateConfig: (candidate: unknown) => ConfigValidationResult;
   refreshSources: () => Promise<OverlayState>;
+  getAgentSetup: () => AgentHookSetup;
+  resolveAgentApproval: (sessionId: string, decision: AgentApprovalDecision) => Promise<boolean> | boolean;
   getAppStatus: () => AppStatus;
   openTarget: (targetUrl: string) => Promise<boolean>;
+  jumpToAgentSession: (sessionId: string) => Promise<boolean>;
   setOverlayExpanded: (expanded: boolean) => OverlayWindowMode;
+  setExpandedContentHeight: (height: number) => void;
 };
 
 export type OverlayHostStatus = {
@@ -37,6 +42,7 @@ export type OverlayHost = {
   isDestroyed: () => boolean;
   send: (channel: string, payload: unknown) => void;
   setMode: (mode: OverlayHostWindowMode) => OverlayHostWindowMode;
+  setExpandedContentHeight: (height: number) => void;
   destroy: () => void;
   getStatus: () => OverlayHostStatus;
 };

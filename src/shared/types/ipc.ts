@@ -1,3 +1,4 @@
+import type { AgentApprovalDecision, AgentHookSetup, AgentTool } from './agent-hook';
 import type { AppConfig } from './config';
 import type { OverlayState } from './source-data';
 
@@ -34,15 +35,25 @@ export type ConfigApi = {
   refreshSources: () => Promise<OverlayState>;
 };
 
+export type AgentApi = {
+  getSetup: () => Promise<AgentHookSetup>;
+  installManagedHooks: (source: AgentTool) => Promise<AgentHookSetup>;
+  uninstallManagedHooks: (source: AgentTool) => Promise<AgentHookSetup>;
+  resolveApproval: (sessionId: string, decision: AgentApprovalDecision) => Promise<boolean>;
+};
+
 export type AppApi = {
   getStatus: () => Promise<AppStatus>;
   openTarget: (targetUrl: string) => Promise<boolean>;
+  jumpToAgentSession: (sessionId: string) => Promise<boolean>;
   setOverlayExpanded: (expanded: boolean) => Promise<OverlayWindowMode>;
+  setExpandedContentHeight: (height: number) => Promise<void>;
   subscribeOverlayMode: (listener: (mode: OverlayWindowMode) => void) => () => void;
 };
 
 export type WindowApi = {
   overlay: OverlayApi;
   config: ConfigApi;
+  agent: AgentApi;
   app: AppApi;
 };

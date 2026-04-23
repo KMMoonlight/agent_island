@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { OverlayState } from '@shared/types/source-data';
 
@@ -6,7 +6,6 @@ type UseOverlayStateResult = {
   state: OverlayState | null;
   isLoading: boolean;
   loadError: string | null;
-  refreshSources: () => Promise<void>;
 };
 
 export function useOverlayState(): UseOverlayStateResult {
@@ -59,25 +58,9 @@ export function useOverlayState(): UseOverlayStateResult {
     };
   }, []);
 
-  const refreshSources = useCallback(async (): Promise<void> => {
-    setIsLoading(true);
-
-    try {
-      const nextState = await window.api.config.refreshSources();
-      setState(nextState);
-      setLoadError(null);
-    } catch (error) {
-      const normalizedError = error instanceof Error ? error : new Error('Failed to refresh sources');
-      setLoadError(normalizedError.message);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
   return {
     state,
     isLoading,
     loadError,
-    refreshSources,
   };
 }

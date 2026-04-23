@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { agentOverlayStateSchema } from './agent-hook';
+
 export const overlayItemSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -33,6 +35,7 @@ export const sourceStateSchema = z.object({
 export const overlayStateSchema = z.object({
   rotationIntervalMs: z.number(),
   sources: z.array(sourceStateSchema),
+  agent: agentOverlayStateSchema,
   updatedAtMs: z.number(),
   hasErrors: z.boolean(),
 });

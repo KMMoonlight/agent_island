@@ -9,59 +9,21 @@
   overflow: clip;
 }
 
-.overlay-shell--browser-window .island {
-  height: 100%;
-  margin-top: 0;
-}
-
-.overlay-shell--browser-window .island::before {
-  background:
-    linear-gradient(180deg, hsl(0 0% 100% / 0.035), transparent 14%),
-    hsl(var(--color-panel-solid));
-  box-shadow:
-    inset 0 1px 0 hsl(0 0% 100% / 0.02),
-    inset 0 0 0 1px hsl(var(--color-panel-line) / 0.64);
-  opacity: 0.985;
-}
-
-.overlay-shell--browser-window .island::after {
-  left: 8px;
-  right: 8px;
-  height: 10px;
-  background: linear-gradient(180deg, hsl(0 0% 100% / 0.03), transparent 86%);
-}
-
-.overlay-shell--browser-window .island--compact {
-  padding: 1px 13px 1px;
-  filter: saturate(0.985) brightness(0.985);
-}
-
-.overlay-shell--browser-window .island__compact-layer {
-  height: 100%;
-  min-height: 100%;
-  align-items: center;
-  justify-content: center;
-  overflow: visible;
-  transform: translateY(3px);
-}
-
-.overlay-shell--browser-window .island__compact-row {
-  min-height: 100%;
-  align-items: center;
-  overflow: visible;
-  transform: translateY(2px);
-}
-
+/* Keep browser fallback compact alignment in lockstep with the native host. */
+.overlay-shell--browser-window .island__compact-row,
 .overlay-shell--native-macos-panel .island__compact-row {
   min-height: 100%;
   align-items: center;
+  overflow: visible;
   transform: translateY(4px);
 }
 
+.overlay-shell--browser-window .island__icon,
 .overlay-shell--native-macos-panel .island__icon {
   transform: none;
 }
 
+.overlay-shell--browser-window .island__content,
 .overlay-shell--native-macos-panel .island__content {
   min-height: 100%;
   justify-content: center;
@@ -69,21 +31,16 @@
   padding-bottom: 0;
 }
 
+.overlay-shell--browser-window .island__title--inline,
 .overlay-shell--native-macos-panel .island__title--inline {
   display: inline-flex;
   line-height: 1;
   transform: translateY(-1px);
 }
 
+.overlay-shell--browser-window .island__summary,
 .overlay-shell--native-macos-panel .island__summary {
   transform: translateY(-1px);
-}
-
-.overlay-shell--browser-window .island__content {
-  min-height: 100%;
-  justify-content: center;
-  padding-top: 0;
-  padding-bottom: 0;
 }
 
 .overlay-shell--browser-window .island__content-stack {
@@ -94,24 +51,6 @@
   display: flex;
   min-height: 18px;
   align-items: center;
-}
-
-.overlay-shell--browser-window .island__content--compact {
-  align-items: center;
-}
-
-.overlay-shell--browser-window .island__title--inline {
-  flex: 0 0 auto;
-  min-width: 0;
-  max-width: 92px;
-  font-size: 0.67rem;
-  line-height: 1;
-}
-
-.overlay-shell--browser-window .island__summary {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: none;
 }
 
 .overlay-shell--browser-window .island--expanding .island__detail-layer--visible.island__detail-layer--ready {
@@ -181,7 +120,7 @@
 }
 
 .island--compact {
-  padding: 0 14px;
+  padding: 0 calc(11% + 8px);
   border-radius: 0;
   filter: saturate(0.97) brightness(0.98);
   clip-path: url(#island-shape-compact);
@@ -224,6 +163,10 @@
 
 .island--expanded {
   border-radius: 0;
+  grid-template-rows: 0 minmax(0, auto);
+  align-content: start;
+  height: auto;
+  max-height: calc(100% + 3px);
 }
 
 .island--collapsing {
@@ -285,6 +228,12 @@
   transition:
     opacity 200ms cubic-bezier(0.16, 1, 0.3, 1),
     transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.island--expanded .island__detail-layer,
+.island--expanding .island__detail-layer {
+  height: auto;
+  max-height: 100%;
 }
 
 .island__detail-layer--visible.island__detail-layer--ready {
@@ -1581,11 +1530,14 @@
 }
 
 .island__expanded-stage {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
   min-height: 0;
-  height: 100%;
-  padding: 14px 10px 0;
+  height: auto;
+  max-height: 100%;
+  padding: 28px 10px 0;
+  overflow: hidden;
 }
 
 .island__expanded-grid {
@@ -1634,11 +1586,49 @@
 
 .island__expanded-grid {
   display: flex;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: 100%;
   flex-direction: column;
+  align-content: start;
   gap: 8px;
   overflow: auto;
   padding: 2px 2px 0;
+}
+
+.island__expanded-grid--agent-only {
+  overflow: hidden;
+}
+
+.island__expanded-grid--agent-only .agent-feed {
+  max-height: 100%;
+}
+
+.island__measure-root {
+  position: fixed;
+  top: -99999px;
+  left: -99999px;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.island__measure-detail {
+  min-height: 0;
+  padding-bottom: 10px;
+}
+
+.island__measure-detail .island__expanded-stage,
+.island__measure-detail .island__expanded-grid,
+.island__measure-detail .agent-feed,
+.island__measure-detail .agent-card,
+.island__measure-detail .agent-card__main,
+.island__measure-detail .island-source-stack {
+  max-height: none;
+}
+
+.island__measure-detail .island__expanded-grid {
+  overflow: visible;
 }
 
 .island__expanded-grid > .source-panel {

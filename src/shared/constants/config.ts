@@ -1,6 +1,6 @@
 export const APP_CONFIG = {
   window: {
-    compactWidth: 376,
+    compactWidth: 480,
     compactHeight: 32,
     expandedWidth: 600,
     expandedHeight: 360,

@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['coverage/**', 'dist/**', 'out/**'],
+    ignores: ['coverage/**', 'dist/**', 'out/**', '.claude/**', '.tmp-open-vibe-island/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

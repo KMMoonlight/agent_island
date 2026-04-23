@@ -1,3 +1,4 @@
+import { AGENT_TOOL_LABELS, type AgentReminder } from '@shared/types/agent-hook';
 import type { SourceState } from '@shared/types/source-data';
 
 export type PixelCompactIconVariant =
@@ -14,7 +15,8 @@ export type PixelCompactIconVariant =
   | 'info';
 
 type IslandCompactProps = {
-  source: SourceState;
+  source: SourceState | null;
+  reminder?: AgentReminder | null;
 };
 
 type PixelCompactIconProps = {
@@ -100,7 +102,52 @@ function getSourceIconVariant(source: SourceState): PixelCompactIconVariant {
   }
 }
 
-export function IslandCompact({ source }: IslandCompactProps): JSX.Element {
+function getReminderIconVariant(reminder: AgentReminder): PixelCompactIconVariant {
+  if (reminder.tone === 'attention') {
+    return 'warn';
+  }
+
+  if (reminder.tone === 'success') {
+    return 'rocket';
+  }
+
+  return 'info';
+}
+
+function getReminderTitle(reminder: AgentReminder): string {
+  const toolLabel = AGENT_TOOL_LABELS[reminder.tool];
+  return compactCopy(reminder.title, `${toolLabel} 提醒`);
+}
+
+function getReminderSummary(reminder: AgentReminder): string {
+  return compactCopy(reminder.summary, '有新的 Agent 交互');
+}
+
+export function IslandCompact({ source, reminder = null }: IslandCompactProps): JSX.Element {
+  if (reminder) {
+    return (
+      <>
+        <PixelCompactIcon variant={getReminderIconVariant(reminder)} />
+        <div className="island__content island__content--compact">
+          <p className="island__title island__title--inline">{getReminderTitle(reminder)}</p>
+          <p className="island__summary">{getReminderSummary(reminder)}</p>
+        </div>
+      </>
+    );
+  }
+
+  if (!source) {
+    return (
+      <>
+        <PixelCompactIcon variant="info" />
+        <div className="island__content island__content--compact">
+          <p className="island__title island__title--inline">No sources configured</p>
+          <p className="island__summary">前往设置页启用内容</p>
+        </div>
+      </>
+    );
+  }
+
   const title = compactCopy(source.summary.title, source.name);
   const value = compactCopy(source.summary.text, source.status === 'error' ? '异常' : '更新中');
   const iconVariant = getSourceIconVariant(source);

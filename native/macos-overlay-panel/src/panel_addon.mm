@@ -57,6 +57,8 @@ class PanelBridgeCallback {
 @property(nonatomic, retain) NSPanel* panel;
 @property(nonatomic, retain) NSView* containerView;
 @property(nonatomic, retain) WKWebView* webView;
+@property(nonatomic, retain) id localMouseMonitor;
+@property(nonatomic, retain) id globalMouseMonitor;
 @property(nonatomic, assign) BOOL webViewLoaded;
 @property(nonatomic, assign) BOOL bridgeReady;
 @property(nonatomic, assign) BOOL pointerInside;
@@ -65,11 +67,37 @@ class PanelBridgeCallback {
 @end
 
 @implementation OverlayPanelRecord
+- (void)dealloc {
+  if (_localMouseMonitor != nil) {
+    [NSEvent removeMonitor:_localMouseMonitor];
+    [_localMouseMonitor release];
+    _localMouseMonitor = nil;
+  }
+
+  if (_globalMouseMonitor != nil) {
+    [NSEvent removeMonitor:_globalMouseMonitor];
+    [_globalMouseMonitor release];
+    _globalMouseMonitor = nil;
+  }
+
+  [_currentURL release];
+  _currentURL = nil;
+
+  [super dealloc];
+}
 @end
 
 @interface OverlayTrackingView : NSView
 @property(nonatomic, assign) OverlayPanelRecord* record;
+- (void)syncPointerState;
 @end
+
+static const CGFloat kCompactIslandWidth = 480.0;
+static const CGFloat kExpandedIslandWidth = 600.0;
+static const CGFloat kCompactTopInset = kCompactIslandWidth * 0.11;
+static const CGFloat kCompactTopDepth = 32.0 * 0.3125;
+static const CGFloat kCompactBottomInset = kCompactIslandWidth * 0.135;
+static const CGFloat kCompactBottomDepth = 32.0 * 0.3125;
 
 @implementation OverlayTrackingView {
   NSTrackingArea* _trackingArea;
@@ -102,22 +130,112 @@ class PanelBridgeCallback {
   [super updateTrackingAreas];
 }
 
-- (void)mouseEntered:(NSEvent*)event {
-  if (self.record == nil || self.record.callback == nullptr || self.record.pointerInside) {
+- (CGPathRef)copyVisibleShapePath CF_RETURNS_RETAINED {
+  const CGRect bounds = NSRectToCGRect(self.bounds);
+  const CGFloat width = CGRectGetWidth(bounds);
+  const CGFloat height = CGRectGetHeight(bounds);
+  CGMutablePathRef path = CGPathCreateMutable();
+
+  if (width <= 0.0 || height <= 0.0) {
+    return path;
+  }
+
+  const CGFloat safeWidth = MAX(width, 1.0);
+  const CGFloat safeHeight = MAX(height, 1.0);
+  const CGFloat widthRange = kExpandedIslandWidth - kCompactIslandWidth;
+  const CGFloat morphProgress = widthRange <= 0.0
+    ? 1.0
+    : MAX(0.0, MIN(1.0, (safeWidth - kCompactIslandWidth) / widthRange));
+  const CGFloat easedCornerProgress = pow(morphProgress, 0.72);
+  const CGFloat expandedScale = MIN(1.0, safeHeight / 58.0);
+  const CGFloat expandedTopInset = 22.0 * expandedScale;
+  const CGFloat expandedTopDepth = 22.0 * expandedScale;
+  const CGFloat expandedBottomInset = 58.0 * expandedScale;
+  const CGFloat expandedBottomDepth = 36.0 * expandedScale;
+  const CGFloat topInset = kCompactTopInset + ((expandedTopInset - kCompactTopInset) * morphProgress);
+  const CGFloat topDepth = kCompactTopDepth + ((expandedTopDepth - kCompactTopDepth) * easedCornerProgress);
+  const CGFloat bottomInset = kCompactBottomInset + ((expandedBottomInset - kCompactBottomInset) * easedCornerProgress);
+  const CGFloat animatedBottomDepth = kCompactBottomDepth + ((expandedBottomDepth - kCompactBottomDepth) * easedCornerProgress);
+  const CGFloat bottomDepth = MAX(animatedBottomDepth, safeHeight * 0.18);
+  const CGFloat rightTopInset = safeWidth - topInset;
+  const CGFloat rightBottomInset = safeWidth - bottomInset;
+  const CGFloat bottomStartY = MAX(topDepth, safeHeight - bottomDepth);
+
+  CGFloat (^viewY)(CGFloat) = ^CGFloat(CGFloat topFraction) {
+    return height * (1.0 - topFraction);
+  };
+
+  CGPathMoveToPoint(path, nullptr, 0.0, viewY(0.0));
+  CGPathAddQuadCurveToPoint(path, nullptr, topInset, viewY(0.0), topInset, safeHeight - topDepth);
+  CGPathAddLineToPoint(path, nullptr, topInset, safeHeight - bottomStartY);
+  CGPathAddQuadCurveToPoint(path, nullptr, topInset, viewY(1.0), bottomInset, viewY(1.0));
+  CGPathAddLineToPoint(path, nullptr, rightBottomInset, viewY(1.0));
+  CGPathAddQuadCurveToPoint(path, nullptr, rightTopInset, viewY(1.0), rightTopInset, safeHeight - bottomStartY);
+  CGPathAddLineToPoint(path, nullptr, rightTopInset, safeHeight - topDepth);
+  CGPathAddQuadCurveToPoint(path, nullptr, rightTopInset, viewY(0.0), safeWidth, viewY(0.0));
+
+  CGPathCloseSubpath(path);
+  return path;
+}
+
+- (BOOL)isLocalPointInsideVisibleShape:(NSPoint)localPoint {
+  if (self.record == nil) {
+    return NO;
+  }
+
+  if (!NSPointInRect(localPoint, self.bounds)) {
+    return NO;
+  }
+
+  CGPathRef path = [self copyVisibleShapePath];
+  const BOOL isInside = CGPathContainsPoint(path, nullptr, CGPointMake(localPoint.x, localPoint.y), false);
+  CGPathRelease(path);
+  return isInside;
+}
+
+- (BOOL)currentMouseIsInsideVisibleShape {
+  if (self.record == nil || self.record.panel == nil) {
+    return NO;
+  }
+
+  const NSPoint screenPoint = [NSEvent mouseLocation];
+  const NSRect frame = [self.record.panel frame];
+  if (!NSPointInRect(screenPoint, frame)) {
+    return NO;
+  }
+
+  const NSPoint windowPoint = [self.record.panel convertPointFromScreen:screenPoint];
+  const NSPoint localPoint = [self convertPoint:windowPoint fromView:nil];
+  return [self isLocalPointInsideVisibleShape:localPoint];
+}
+
+- (void)syncPointerState {
+  if (self.record == nil || self.record.panel == nil) {
     return;
   }
 
-  self.record.pointerInside = YES;
-  self.record.callback->Emit(@"{\"kind\":\"event\",\"channel\":\"native:hover\",\"payload\":{\"inside\":true}}");
+  const BOOL inside = [self currentMouseIsInsideVisibleShape];
+  [self.record.panel setIgnoresMouseEvents:inside ? NO : YES];
+
+  if (self.record.callback == nullptr || self.record.pointerInside == inside) {
+    self.record.pointerInside = inside;
+    return;
+  }
+
+  self.record.pointerInside = inside;
+  self.record.callback->Emit(
+    inside
+      ? @"{\"kind\":\"event\",\"channel\":\"native:hover\",\"payload\":{\"inside\":true}}"
+      : @"{\"kind\":\"event\",\"channel\":\"native:hover\",\"payload\":{\"inside\":false}}"
+  );
+}
+
+- (void)mouseEntered:(NSEvent*)event {
+  [self syncPointerState];
 }
 
 - (void)mouseExited:(NSEvent*)event {
-  if (self.record == nil || self.record.callback == nullptr || !self.record.pointerInside) {
-    return;
-  }
-
-  self.record.pointerInside = NO;
-  self.record.callback->Emit(@"{\"kind\":\"event\",\"channel\":\"native:hover\",\"payload\":{\"inside\":false}}");
+  [self syncPointerState];
 }
 @end
 
@@ -390,13 +508,19 @@ NSString* GetBridgeBootstrapScript() {
       getState: () => request('overlay:get-state'),
       subscribe: (listener) => subscribe('overlay:updated', listener),
     },
+    agent: {
+      getSetup: () => request('agent:get-setup'),
+      resolveApproval: (sessionId, decision) => request('agent:resolve-approval', { sessionId, decision }),
+    },
     config: {
       reload: () => request('config:reload'),
     },
     app: {
       getStatus: () => request('app:get-status'),
       openTarget: (targetUrl) => request('app:open-target', targetUrl),
+      jumpToAgentSession: (sessionId) => request('app:jump-to-agent-session', sessionId),
       setOverlayExpanded: (expanded) => request('app:set-overlay-expanded', expanded),
+      setExpandedContentHeight: (height) => request('app:set-expanded-content-height', height),
       subscribeOverlayMode: (listener) => subscribe('app:overlay-mode-changed', listener),
     },
   };
@@ -555,6 +679,27 @@ Napi::Value CreatePanel(const Napi::CallbackInfo& info) {
     [panel setWorksWhenModal:YES];
 
     StorePanelRecord(record);
+
+    const NSEventMask monitorMask =
+      NSEventMaskMouseMoved |
+      NSEventMaskLeftMouseDown |
+      NSEventMaskLeftMouseUp |
+      NSEventMaskRightMouseDown |
+      NSEventMaskRightMouseUp |
+      NSEventMaskOtherMouseDown |
+      NSEventMaskOtherMouseUp |
+      NSEventMaskScrollWheel;
+    __unsafe_unretained OverlayTrackingView* trackingView = containerView;
+    record.localMouseMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:monitorMask handler:^NSEvent*(NSEvent* event) {
+      [trackingView syncPointerState];
+      return event;
+    }];
+    record.globalMouseMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:monitorMask handler:^(NSEvent* event) {
+      RunOnMainQueueSync(^{
+        [trackingView syncPointerState];
+      });
+    }];
+    [containerView syncPointerState];
   });
 
   if (panel == nil) {
@@ -625,6 +770,7 @@ Napi::Value LoadPanelUrl(const Napi::CallbackInfo& info) {
     record.pointerInside = NO;
     record.currentURL = [url absoluteString];
     [record.webView loadRequest:[NSURLRequest requestWithURL:url]];
+    [((OverlayTrackingView*)record.containerView) syncPointerState];
     didLoad = true;
   });
 
@@ -659,6 +805,7 @@ Napi::Value LoadPanelFile(const Napi::CallbackInfo& info) {
     record.pointerInside = NO;
     record.currentURL = [fileUrl absoluteString];
     didLoad = [record.webView loadFileURL:fileUrl allowingReadAccessToURL:readAccessUrl];
+    [((OverlayTrackingView*)record.containerView) syncPointerState];
   });
 
   return Napi::Boolean::New(env, didLoad);
@@ -752,6 +899,10 @@ Napi::Value SetPanelFrame(const Napi::CallbackInfo& info) {
   RunOnMainQueueSync(^{
     const NSRect nextFrame = ToAppKitRect(input, display);
     [panel setFrame:nextFrame display:YES animate:NO];
+    OverlayPanelRecord* record = GetPanelRecord(panel);
+    if (record != nil && record.containerView != nil) {
+      [((OverlayTrackingView*)record.containerView) syncPointerState];
+    }
     didSetFrame = NSEqualRects([panel frame], nextFrame);
   });
 
@@ -824,6 +975,10 @@ Napi::Value OrderPanelFrontRegardless(const Napi::CallbackInfo& info) {
   __block bool didOrderFront = false;
   RunOnMainQueueSync(^{
     [panel orderFrontRegardless];
+    OverlayPanelRecord* record = GetPanelRecord(panel);
+    if (record != nil && record.containerView != nil) {
+      [((OverlayTrackingView*)record.containerView) syncPointerState];
+    }
     didOrderFront = [panel isVisible];
   });
 

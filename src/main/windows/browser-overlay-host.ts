@@ -1,18 +1,12 @@
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow } from 'electron';
 import path from 'node:path';
 
 import { APP_CONFIG } from '../../shared/constants/config';
 import type { OverlayHost, OverlayHostStatus, OverlayHostWindowMode } from './overlay-host';
 import { createBrowserWindowContentHost, type OverlayContentHost } from './overlay-content-host';
+import { getHostOverlayBounds, type WindowBounds } from './overlay-geometry';
 
 export type WindowContentLoader = (contentHost: OverlayContentHost) => Promise<void>;
-
-export type WindowBounds = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
 
 type WindowAnimationSettings = {
   durationMs: number;
@@ -23,50 +17,6 @@ type WindowAnimationSettings = {
 };
 
 const windowAnimationTimers = new WeakMap<BrowserWindow, NodeJS.Timeout>();
-const BROWSER_HOST_TOP_COMPENSATION = {
-  compact: -2,
-  expanded: -1,
-} as const;
-const BROWSER_HOST_BOUNDS_COMPENSATION = {
-  compactHeight: 2,
-} as const;
-
-export function getOverlayTop(display: Electron.Display, mode: OverlayHostWindowMode): number {
-  const compactTop =
-    display.workArea.y +
-    BROWSER_HOST_TOP_COMPENSATION.compact -
-    APP_CONFIG.window.compactHeight +
-    APP_CONFIG.window.compactTopMargin;
-
-  if (mode === 'expanded') {
-    return compactTop + APP_CONFIG.window.expandedTopMargin + BROWSER_HOST_TOP_COMPENSATION.expanded;
-  }
-
-  return compactTop;
-}
-
-export function getOverlayBounds(mode: OverlayHostWindowMode): WindowBounds {
-  const display = screen.getPrimaryDisplay();
-  const width = mode === 'expanded' ? APP_CONFIG.window.expandedWidth : APP_CONFIG.window.compactWidth;
-  const height = mode === 'expanded' ? APP_CONFIG.window.expandedHeight : APP_CONFIG.window.compactHeight;
-  const x = Math.round(display.workArea.x + (display.workArea.width - width) / 2);
-  const y = getOverlayTop(display, mode);
-
-  return { x, y, width, height };
-}
-
-function getBrowserOverlayBounds(mode: OverlayHostWindowMode): WindowBounds {
-  const bounds = getOverlayBounds(mode);
-
-  if (mode === 'compact') {
-    return {
-      ...bounds,
-      height: bounds.height + BROWSER_HOST_BOUNDS_COMPENSATION.compactHeight,
-    };
-  }
-
-  return bounds;
-}
 
 export function clearWindowAnimation(window: BrowserWindow): void {
   const activeTimer = windowAnimationTimers.get(window);
@@ -172,7 +122,7 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
   }
 
   if (mode === 'expanded') {
-    const compactBounds = getBrowserOverlayBounds('compact');
+      const compactBounds = getHostOverlayBounds('compact');
     const currentBounds = window.getBounds();
 
     if (currentBounds.y !== compactBounds.y) {
@@ -246,7 +196,7 @@ function animateOverlayWindow(window: BrowserWindow, targetBounds: WindowBounds,
 
 export function createOverlayBrowserWindow(): BrowserWindow {
   const window = new BrowserWindow({
-    ...getBrowserOverlayBounds('compact'),
+    ...getHostOverlayBounds('compact'),
     show: false,
     frame: false,
     transparent: true,
@@ -281,6 +231,8 @@ export function createBrowserOverlayHost(
     active: 'browser-window',
     fallbackReason,
   };
+  let expandedContentHeight: number = APP_CONFIG.window.expandedHeight;
+  let currentMode: OverlayHostWindowMode = 'compact';
 
   const contentHost = createBrowserWindowContentHost(window);
 
@@ -297,8 +249,20 @@ export function createBrowserOverlayHost(
       contentHost.send(channel, payload);
     },
     setMode: (mode) => {
-      animateOverlayWindow(window, getBrowserOverlayBounds(mode), mode);
+      currentMode = mode;
+      animateOverlayWindow(window, getHostOverlayBounds(mode, expandedContentHeight), mode);
       return mode;
+    },
+    setExpandedContentHeight: (height) => {
+      if (!Number.isFinite(height)) {
+        return;
+      }
+
+      expandedContentHeight = Math.max(APP_CONFIG.window.compactHeight, Math.min(APP_CONFIG.window.expandedHeight, Math.round(height)));
+
+      if (currentMode === 'expanded') {
+        animateOverlayWindow(window, getHostOverlayBounds('expanded', expandedContentHeight), 'expanded');
+      }
     },
     destroy: () => {
       clearWindowAnimation(window);

@@ -16,10 +16,9 @@ import type {
 import {
   easeInOutSmooth,
   easeOutSmoothSpring,
-  getOverlayBounds,
   interpolate,
-  type WindowBounds,
 } from './browser-overlay-host';
+import { getHostOverlayBounds, type WindowBounds } from './overlay-geometry';
 
 const logger = baseLogger.scope('native-overlay-host');
 
@@ -28,10 +27,6 @@ type NativeAnimationSettings = {
   easing: (progress: number) => number;
   lockTopEdge: boolean;
 };
-
-const NATIVE_HOST_BOUNDS_COMPENSATION = {
-  compactHeight: 3,
-} as const;
 
 type NativeHostEventMessage = {
   kind: 'event';
@@ -96,16 +91,7 @@ function getPrimaryDisplayMetadata(): NativeOverlayDisplay {
 }
 
 function getNativeOverlayBounds(mode: OverlayHostWindowMode): WindowBounds {
-  const bounds = getOverlayBounds(mode);
-
-  if (mode === 'compact') {
-    return {
-      ...bounds,
-      height: bounds.height + NATIVE_HOST_BOUNDS_COMPENSATION.compactHeight,
-    };
-  }
-
-  return bounds;
+  return getHostOverlayBounds(mode);
 }
 
 export function createNativeMacOverlayHost(
@@ -126,6 +112,9 @@ export function createNativeMacOverlayHost(
   let isDestroyed = panelHandle === null;
   let isBridgeReady = false;
   let currentMode: OverlayHostWindowMode = 'compact';
+  let expandedContentHeight: number = APP_CONFIG.window.expandedHeight;
+  let isPointerInside = false;
+  let suppressExpandUntilPointerLeaves = false;
 
   if (panelHandle === null) {
     throw new Error('Native NSPanel creation failed.');
@@ -210,6 +199,9 @@ export function createNativeMacOverlayHost(
   const scheduleModeChange = (mode: OverlayHostWindowMode): void => {
     if (mode === 'expanded') {
       collapseTimer = clearHoverTimer(collapseTimer);
+      if (suppressExpandUntilPointerLeaves) {
+        return;
+      }
       if (currentMode === 'expanded' || expandTimer !== null) {
         return;
       }
@@ -243,7 +235,7 @@ export function createNativeMacOverlayHost(
       ensureCompactAnchor();
     }
 
-    const targetBounds = getNativeOverlayBounds(mode);
+    const targetBounds = getHostOverlayBounds(mode, expandedContentHeight);
     const initialBounds = getCurrentBounds();
     const hasChanges =
       initialBounds.x !== targetBounds.x ||
@@ -326,6 +318,28 @@ export function createNativeMacOverlayHost(
           sendResponse(message.requestId, state);
           return;
         }
+        case 'agent:get-setup': {
+          sendResponse(message.requestId, bridge.getAgentSetup());
+          return;
+        }
+        case 'agent:resolve-approval': {
+          const payload =
+            typeof message.payload === 'object' && message.payload !== null
+              ? message.payload as { sessionId?: unknown; decision?: unknown }
+              : null;
+
+          if (
+            typeof payload?.sessionId !== 'string'
+            || (payload.decision !== 'deny' && payload.decision !== 'allow-once' && payload.decision !== 'allow-always')
+          ) {
+            sendResponse(message.requestId, false);
+            return;
+          }
+
+          const didResolve = await bridge.resolveAgentApproval(payload.sessionId, payload.decision);
+          sendResponse(message.requestId, didResolve);
+          return;
+        }
         case 'app:get-status': {
           sendResponse(message.requestId, bridge.getAppStatus());
           return;
@@ -340,9 +354,29 @@ export function createNativeMacOverlayHost(
           sendResponse(message.requestId, didOpen);
           return;
         }
+        case 'app:jump-to-agent-session': {
+          if (typeof message.payload !== 'string') {
+            sendResponse(message.requestId, false);
+            return;
+          }
+
+          const didJump = await bridge.jumpToAgentSession(message.payload);
+          sendResponse(message.requestId, didJump);
+          return;
+        }
         case 'app:set-overlay-expanded': {
           const nextMode = bridge.setOverlayExpanded(Boolean(message.payload));
           sendResponse(message.requestId, nextMode);
+          return;
+        }
+        case 'app:set-expanded-content-height': {
+          if (typeof message.payload !== 'number' || !Number.isFinite(message.payload)) {
+            sendResponse(message.requestId, null);
+            return;
+          }
+
+          bridge.setExpandedContentHeight(message.payload);
+          sendResponse(message.requestId, null);
           return;
         }
         default: {
@@ -405,6 +439,10 @@ export function createNativeMacOverlayHost(
             ? (message.payload as { inside: boolean }).inside
             : false;
 
+        isPointerInside = inside;
+        if (!inside) {
+          suppressExpandUntilPointerLeaves = false;
+        }
         scheduleModeChange(inside ? 'expanded' : 'compact');
         return;
       }
@@ -441,9 +479,23 @@ export function createNativeMacOverlayHost(
       });
     },
     setMode: (mode) => {
+      if (mode === 'compact' && isPointerInside) {
+        suppressExpandUntilPointerLeaves = true;
+      }
       currentMode = mode;
       animatePanel(mode);
       return mode;
+    },
+    setExpandedContentHeight: (height) => {
+      if (!Number.isFinite(height)) {
+        return;
+      }
+
+      expandedContentHeight = Math.max(APP_CONFIG.window.compactHeight, Math.min(APP_CONFIG.window.expandedHeight, Math.round(height)));
+
+      if (currentMode === 'expanded') {
+        animatePanel('expanded');
+      }
     },
     destroy: () => {
       destroyResources();

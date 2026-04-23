@@ -26,10 +26,18 @@ const api: WindowApi = {
     validate: (candidate: unknown) => ipcRenderer.invoke(IPC_CHANNELS.CONFIG.VALIDATE, candidate),
     refreshSources: () => ipcRenderer.invoke(IPC_CHANNELS.CONFIG.REFRESH_SOURCES),
   },
+  agent: {
+    getSetup: () => ipcRenderer.invoke(IPC_CHANNELS.AGENT.GET_SETUP),
+    installManagedHooks: (source) => ipcRenderer.invoke(IPC_CHANNELS.AGENT.INSTALL_MANAGED_HOOKS, source),
+    uninstallManagedHooks: (source) => ipcRenderer.invoke(IPC_CHANNELS.AGENT.UNINSTALL_MANAGED_HOOKS, source),
+    resolveApproval: (sessionId, decision) => ipcRenderer.invoke(IPC_CHANNELS.AGENT.RESOLVE_APPROVAL, sessionId, decision),
+  },
   app: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.APP.GET_STATUS),
     openTarget: (targetUrl) => ipcRenderer.invoke(IPC_CHANNELS.APP.OPEN_TARGET, targetUrl),
+    jumpToAgentSession: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.APP.JUMP_TO_AGENT_SESSION, sessionId),
     setOverlayExpanded: (expanded) => ipcRenderer.invoke(IPC_CHANNELS.APP.SET_OVERLAY_EXPANDED, expanded),
+    setExpandedContentHeight: (height) => ipcRenderer.invoke(IPC_CHANNELS.APP.SET_EXPANDED_CONTENT_HEIGHT, height),
     subscribeOverlayMode: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, mode: OverlayWindowMode) => {
         listener(mode);

@@ -2,4 +2,5 @@
 @import './tokens.css';
 @import './base.css';
 @import './components/source-panel.css';
+@import './components/agent-panel.css';
 @import './components/island.css';
