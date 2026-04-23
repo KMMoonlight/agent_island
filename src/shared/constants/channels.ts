@@ -16,6 +16,7 @@ export const IPC_CHANNELS = {
     INSTALL_MANAGED_HOOKS: 'agent:install-managed-hooks',
     UNINSTALL_MANAGED_HOOKS: 'agent:uninstall-managed-hooks',
     RESOLVE_APPROVAL: 'agent:resolve-approval',
+    HANDOFF_APPROVAL: 'agent:handoff-approval',
   },
   APP: {
     OPEN_TARGET: 'app:open-target',

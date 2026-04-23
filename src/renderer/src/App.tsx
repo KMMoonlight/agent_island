@@ -48,8 +48,8 @@ function getExpandedCurveProfile(height: number): IslandCurveProfile {
   return {
     topInset: 22 * scale,
     topDepth: 22 * scale,
-    bottomInset: 58 * scale,
-    bottomDepth: 36 * scale,
+    bottomInset: 34 * scale,
+    bottomDepth: 18 * scale,
   };
 }
 
@@ -73,7 +73,7 @@ function buildIslandPath(width: number, height: number, morphProgress: number): 
   const topDepth = interpolateNumber(compactCurve.topDepth, expandedCurve.topDepth, easedCornerProgress);
   const bottomInset = interpolateNumber(compactCurve.bottomInset, expandedCurve.bottomInset, easedCornerProgress);
   const animatedBottomDepth = interpolateNumber(compactCurve.bottomDepth, expandedCurve.bottomDepth, easedCornerProgress);
-  const bottomDepth = Math.max(animatedBottomDepth, safeHeight * 0.18);
+  const bottomDepth = Math.max(animatedBottomDepth, safeHeight * 0.05);
   const rightTopInset = safeWidth - topInset;
   const rightBottomInset = safeWidth - bottomInset;
   const bottomStartY = Math.max(topDepth, safeHeight - bottomDepth);
@@ -91,7 +91,17 @@ function buildIslandPath(width: number, height: number, morphProgress: number): 
   ].join(' ');
 }
 
+function getIslandPathDefinition(visualSize: IslandVisualSize): string {
+  return buildIslandPath(
+    visualSize.width,
+    visualSize.height,
+    getIslandMorphProgress(visualSize.width)
+  );
+}
+
 function IslandShapeDefs({ visualSize }: { visualSize: IslandVisualSize }): JSX.Element {
+  const pathDefinition = getIslandPathDefinition(visualSize);
+
   return (
     <svg
       aria-hidden="true"
@@ -109,14 +119,47 @@ function IslandShapeDefs({ visualSize }: { visualSize: IslandVisualSize }): JSX.
         <clipPath id="island-shape-expanded" clipPathUnits="userSpaceOnUse">
           <path
             id="island-shape-expanded-path"
-            d={buildIslandPath(
-              visualSize.width,
-              visualSize.height,
-              getIslandMorphProgress(visualSize.width)
-            )}
+            d={pathDefinition}
           />
         </clipPath>
       </defs>
+    </svg>
+  );
+}
+
+function IslandShapeSurface({ visualSize }: { visualSize: IslandVisualSize }): JSX.Element {
+  const width = Math.max(1, visualSize.width);
+  const height = Math.max(1, visualSize.height);
+  const pathDefinition = getIslandPathDefinition({ width, height });
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="island__shape-surface"
+      viewBox={`0 0 ${width} ${height}`}
+      width={width}
+      height={height}
+      preserveAspectRatio="none"
+    >
+      <defs>
+        <linearGradient id="island-shape-surface-highlight" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="hsl(0 0% 100% / 0.05)" />
+          <stop offset="18%" stopColor="hsl(0 0% 100% / 0)" />
+          <stop offset="100%" stopColor="hsl(0 0% 100% / 0)" />
+        </linearGradient>
+      </defs>
+      <path
+        className="island__shape-surface-fill"
+        d={pathDefinition}
+      />
+      <path
+        className="island__shape-surface-highlight"
+        d={pathDefinition}
+      />
+      <path
+        className="island__shape-outline-path"
+        d={pathDefinition}
+      />
     </svg>
   );
 }
@@ -287,6 +330,13 @@ function OverlayApp(): JSX.Element {
       return;
     }
 
+    const session = state?.agent.sessions.find((item) => item.id === sessionId);
+    const shouldHandoffToCodex = session?.tool === 'codex' && session.phase === 'needs-approval';
+
+    if (shouldHandoffToCodex) {
+      await window.api.agent.handoffApproval(sessionId).catch(() => false);
+    }
+
     if (activeReminder) {
       suppressedReminderIdRef.current = activeReminder.id;
     }
@@ -303,10 +353,12 @@ function OverlayApp(): JSX.Element {
     }
 
     const session = state?.agent.sessions.find((item) => item.id === sessionId);
-    const shouldJumpToCodexConfirmation = decision !== 'deny'
+    const shouldHandoffToCodex = decision !== 'deny'
       && session?.tool === 'codex'
       && session.lastEventName === 'PreToolUse';
-    const didResolve = await window.api.agent.resolveApproval(sessionId, decision).catch(() => false);
+    const didResolve = shouldHandoffToCodex
+      ? await window.api.agent.handoffApproval(sessionId).catch(() => false)
+      : await window.api.agent.resolveApproval(sessionId, decision).catch(() => false);
 
     if (!didResolve) {
       return;
@@ -322,7 +374,7 @@ function OverlayApp(): JSX.Element {
     clearTimerRef(reminderCollapseTimerRef);
     requestWindowMode(false);
 
-    if (shouldJumpToCodexConfirmation) {
+    if (shouldHandoffToCodex) {
       await window.api.app.jumpToAgentSession(sessionId);
     }
   };
@@ -618,6 +670,7 @@ function OverlayApp(): JSX.Element {
             scheduleCollapse();
           }}
         >
+          <IslandShapeSurface visualSize={islandVisualSize} />
           <div className="island__compact-layer">{stableCompactContent}</div>
           <div
             className={`island__detail-layer${keepsDetailVisible ? ' island__detail-layer--visible' : ''}${

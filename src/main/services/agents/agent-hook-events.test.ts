@@ -110,7 +110,7 @@ describe('parseAgentHookPayload', () => {
     expect(result?.reminder?.expiresAtMs).toBeNull();
   });
 
-  it('maps Codex PreToolUse command hooks to approval reminders', () => {
+  it('maps Codex PreToolUse command hooks to non-blocking running sessions', () => {
     const result = parseAgentHookPayload('codex', {
       cwd: '/Users/sai/Documents/agent_island',
       hook_event_name: 'PreToolUse',
@@ -122,20 +122,11 @@ describe('parseAgentHookPayload', () => {
     }, 1_717_171_717_000);
 
     expect(result).not.toBeNull();
-    expect(result?.session.phase).toBe('needs-approval');
-    expect(result?.session.summary).toBe('等待你的确认');
+    expect(result?.session.phase).toBe('running');
+    expect(result?.session.summary).toBe('准备执行命令');
     expect(result?.session.detail).toBe('pnpm install');
-    expect(result?.session.approvalRequest).toEqual({
-      kind: 'command',
-      command: 'pnpm install',
-      rememberKey: 'pnpm install',
-      options: [
-        { id: 'deny', label: '拒绝' },
-        { id: 'allow-once', label: '前往 Codex 确认' },
-      ],
-    });
-    expect(result?.reminder?.title).toBe('Codex 需要确认');
-    expect(result?.reminder?.summary).toBe('pnpm install');
+    expect(result?.session.approvalRequest).toBeUndefined();
+    expect(result?.reminder).toBeNull();
   });
 
   it('keeps the full multiline command for Codex PreToolUse session details', () => {
@@ -152,9 +143,8 @@ describe('parseAgentHookPayload', () => {
 
     expect(result).not.toBeNull();
     expect(result?.session.detail).toContain('--another bar');
-    expect(result?.session.approvalRequest?.command).toContain('--another bar');
-    expect(result?.session.approvalRequest?.options[1]?.label).toBe('前往 Codex 确认');
-    expect(result?.reminder?.summary).toContain('--another bar');
+    expect(result?.session.approvalRequest).toBeUndefined();
+    expect(result?.reminder).toBeNull();
   });
 
   it('keeps full multiline Codex stop reminder text for expanded display', () => {

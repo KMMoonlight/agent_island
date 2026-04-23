@@ -2,6 +2,7 @@
 
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <QuartzCore/QuartzCore.h>
 #import <WebKit/WebKit.h>
 
 class PanelBridgeCallback {
@@ -101,6 +102,7 @@ static const CGFloat kCompactBottomDepth = 32.0 * 0.3125;
 
 @implementation OverlayTrackingView {
   NSTrackingArea* _trackingArea;
+  CAShapeLayer* _shapeMaskLayer;
 }
 
 - (void)dealloc {
@@ -108,6 +110,11 @@ static const CGFloat kCompactBottomDepth = 32.0 * 0.3125;
     [self removeTrackingArea:_trackingArea];
     [_trackingArea release];
     _trackingArea = nil;
+  }
+
+  if (_shapeMaskLayer != nil) {
+    [_shapeMaskLayer release];
+    _shapeMaskLayer = nil;
   }
 
   [super dealloc];
@@ -130,6 +137,39 @@ static const CGFloat kCompactBottomDepth = 32.0 * 0.3125;
   [super updateTrackingAreas];
 }
 
+- (void)syncVisibleShapeMask {
+  if (![self wantsLayer]) {
+    return;
+  }
+
+  CALayer* layer = [self layer];
+  if (layer == nil) {
+    return;
+  }
+
+  CGPathRef path = [self copyVisibleShapePath];
+  if (_shapeMaskLayer == nil) {
+    _shapeMaskLayer = [[CAShapeLayer alloc] init];
+    _shapeMaskLayer.fillColor = [[NSColor blackColor] CGColor];
+  }
+
+  _shapeMaskLayer.frame = self.bounds;
+  _shapeMaskLayer.path = path;
+  _shapeMaskLayer.contentsScale = self.window != nil ? self.window.backingScaleFactor : NSScreen.mainScreen.backingScaleFactor;
+  layer.mask = _shapeMaskLayer;
+  CGPathRelease(path);
+}
+
+- (void)layout {
+  [super layout];
+  [self syncVisibleShapeMask];
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+  [super setFrameSize:newSize];
+  [self syncVisibleShapeMask];
+}
+
 - (CGPathRef)copyVisibleShapePath CF_RETURNS_RETAINED {
   const CGRect bounds = NSRectToCGRect(self.bounds);
   const CGFloat width = CGRectGetWidth(bounds);
@@ -150,13 +190,13 @@ static const CGFloat kCompactBottomDepth = 32.0 * 0.3125;
   const CGFloat expandedScale = MIN(1.0, safeHeight / 58.0);
   const CGFloat expandedTopInset = 22.0 * expandedScale;
   const CGFloat expandedTopDepth = 22.0 * expandedScale;
-  const CGFloat expandedBottomInset = 58.0 * expandedScale;
-  const CGFloat expandedBottomDepth = 36.0 * expandedScale;
+  const CGFloat expandedBottomInset = 34.0 * expandedScale;
+  const CGFloat expandedBottomDepth = 18.0 * expandedScale;
   const CGFloat topInset = kCompactTopInset + ((expandedTopInset - kCompactTopInset) * morphProgress);
   const CGFloat topDepth = kCompactTopDepth + ((expandedTopDepth - kCompactTopDepth) * easedCornerProgress);
   const CGFloat bottomInset = kCompactBottomInset + ((expandedBottomInset - kCompactBottomInset) * easedCornerProgress);
   const CGFloat animatedBottomDepth = kCompactBottomDepth + ((expandedBottomDepth - kCompactBottomDepth) * easedCornerProgress);
-  const CGFloat bottomDepth = MAX(animatedBottomDepth, safeHeight * 0.18);
+  const CGFloat bottomDepth = MAX(animatedBottomDepth, safeHeight * 0.05);
   const CGFloat rightTopInset = safeWidth - topInset;
   const CGFloat rightBottomInset = safeWidth - bottomInset;
   const CGFloat bottomStartY = MAX(topDepth, safeHeight - bottomDepth);
@@ -644,6 +684,7 @@ Napi::Value CreatePanel(const Napi::CallbackInfo& info) {
     [containerView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [containerView setWantsLayer:YES];
     [[containerView layer] setBackgroundColor:[[NSColor clearColor] CGColor]];
+    [containerView syncVisibleShapeMask];
 
     OverlayPanelRecord* record = [[[OverlayPanelRecord alloc] init] autorelease];
     record.panel = panel;

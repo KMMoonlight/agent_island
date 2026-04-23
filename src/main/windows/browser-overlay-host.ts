@@ -68,14 +68,6 @@ function applyWindowBounds(
   window.setBounds(normalizedBounds, false);
 }
 
-export function easeOutSmoothSpring(progress: number): number {
-  const damping = 5.2;
-  const angularFrequency = 7.6;
-  const value = 1 - Math.exp(-damping * progress) * Math.cos(angularFrequency * progress);
-
-  return Math.min(1, value);
-}
-
 export function easeOutSmooth(progress: number): number {
   return 1 - Math.pow(1 - progress, 4);
 }

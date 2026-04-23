@@ -15,7 +15,7 @@ import type {
 } from './overlay-host';
 import {
   easeInOutSmooth,
-  easeOutSmoothSpring,
+  easeOutSmooth,
   interpolate,
 } from './browser-overlay-host';
 import { getHostOverlayBounds, type WindowBounds } from './overlay-geometry';
@@ -61,7 +61,7 @@ function getNativeAnimation(mode: OverlayHostWindowMode): NativeAnimationSetting
   return mode === 'expanded'
     ? {
         durationMs: APP_CONFIG.window.expandTransitionMs,
-        easing: easeOutSmoothSpring,
+        easing: easeOutSmooth,
         lockTopEdge: true,
       }
     : {

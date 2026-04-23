@@ -31,6 +31,7 @@ const api: WindowApi = {
     installManagedHooks: (source) => ipcRenderer.invoke(IPC_CHANNELS.AGENT.INSTALL_MANAGED_HOOKS, source),
     uninstallManagedHooks: (source) => ipcRenderer.invoke(IPC_CHANNELS.AGENT.UNINSTALL_MANAGED_HOOKS, source),
     resolveApproval: (sessionId, decision) => ipcRenderer.invoke(IPC_CHANNELS.AGENT.RESOLVE_APPROVAL, sessionId, decision),
+    handoffApproval: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.AGENT.HANDOFF_APPROVAL, sessionId),
   },
   app: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.APP.GET_STATUS),

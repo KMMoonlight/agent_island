@@ -942,6 +942,26 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     return true;
   }
 
+  handoffPendingApproval(sessionId: string): boolean {
+    const pendingSessionId = this.findPendingApprovalSessionId(sessionId);
+    const pendingApproval = pendingSessionId ? this.pendingApprovals.get(pendingSessionId) : undefined;
+
+    if (!pendingApproval || pendingApproval.source !== 'codex') {
+      return false;
+    }
+
+    const resolvedSessionId = pendingSessionId as string;
+
+    this.logger.info('Handing pending Codex approval back to Codex', {
+      sessionId: resolvedSessionId,
+    });
+
+    this.syncResolvedSession(resolvedSessionId, 'running', '已转交 Codex 端处理');
+    this.settlePendingApproval(resolvedSessionId, { statusCode: 204 });
+
+    return true;
+  }
+
   private readRequestBody(request: http.IncomingMessage): Promise<string> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];

@@ -40,6 +40,7 @@ export type AgentApi = {
   installManagedHooks: (source: AgentTool) => Promise<AgentHookSetup>;
   uninstallManagedHooks: (source: AgentTool) => Promise<AgentHookSetup>;
   resolveApproval: (sessionId: string, decision: AgentApprovalDecision) => Promise<boolean>;
+  handoffApproval: (sessionId: string) => Promise<boolean>;
 };
 
 export type AppApi = {

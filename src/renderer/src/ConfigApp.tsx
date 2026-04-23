@@ -155,7 +155,7 @@ function Field({ children, label }: FieldProps): JSX.Element {
   return (
     <div className="grid gap-2">
       <div className="grid gap-1">
-        <Label>{label}</Label>
+        <Label className="text-[11px]">{label}</Label>
       </div>
       {children}
     </div>
@@ -171,6 +171,7 @@ function KeyValueEditor({ addLabel, entries, keyPlaceholder, onChange, valuePlac
         {safeEntries.map((entry, index) => (
           <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" key={`${keyPlaceholder}-${index}`}>
             <Input
+              className="h-9 text-xs file:text-xs"
               value={entry.key}
               placeholder={keyPlaceholder}
               onChange={(event) => {
@@ -178,6 +179,7 @@ function KeyValueEditor({ addLabel, entries, keyPlaceholder, onChange, valuePlac
               }}
             />
             <Input
+              className="h-9 text-xs file:text-xs"
               value={entry.value}
               placeholder={valuePlaceholder}
               onChange={(event) => {
@@ -185,7 +187,7 @@ function KeyValueEditor({ addLabel, entries, keyPlaceholder, onChange, valuePlac
               }}
             />
             <Button
-              className="sm:self-auto"
+              className="h-9 text-xs sm:self-auto"
               size="sm"
               variant="outline"
               onClick={() => {
@@ -199,6 +201,7 @@ function KeyValueEditor({ addLabel, entries, keyPlaceholder, onChange, valuePlac
       </div>
       <div>
         <Button
+          className="h-9 text-xs"
           size="sm"
           variant="outline"
           onClick={() => {
@@ -216,11 +219,11 @@ function SnippetCard({ title, description, configPath, value }: SnippetCardProps
   return (
     <article className="grid gap-2.5 rounded-xl border border-zinc-200 bg-white p-3">
       <div className="grid gap-1">
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-600">{title}</h3>
-        <p className="text-[10px] leading-5 text-zinc-500">{description}</p>
-        <p className="font-mono text-[10px] text-zinc-400">{configPath}</p>
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-600">{title}</h3>
+        <p className="text-xs leading-5 text-zinc-500">{description}</p>
+        <p className="font-mono text-xs text-zinc-400">{configPath}</p>
       </div>
-      <Textarea className="min-h-[160px] font-mono text-[10px] leading-5" readOnly value={value} />
+      <Textarea className="min-h-[160px] font-mono text-xs leading-5" readOnly value={value} />
     </article>
   );
 }
@@ -464,11 +467,11 @@ export default function ConfigApp(): JSX.Element {
   };
 
   if (isLoading) {
-    return <main className="config-page grid min-h-screen place-items-center px-6 text-[10px] text-zinc-500">Loading source settings...</main>;
+    return <main className="config-page grid min-h-screen place-items-center px-6 text-[11px] text-zinc-500">Loading source settings...</main>;
   }
 
   if (!config) {
-    return <main className="config-page grid min-h-screen place-items-center px-6 text-[10px] text-zinc-500">Unable to load source settings.</main>;
+    return <main className="config-page grid min-h-screen place-items-center px-6 text-[11px] text-zinc-500">Unable to load source settings.</main>;
   }
 
   return (
@@ -481,7 +484,7 @@ export default function ConfigApp(): JSX.Element {
                 key={tab.id}
                 type="button"
                 className={cn(
-                  'flex h-7 items-center rounded-md px-2.5 text-[9px] transition-colors',
+                  'flex h-8 items-center rounded-md px-3 text-[11px] transition-colors',
                   activeTab === tab.id ? 'bg-zinc-100 font-medium text-zinc-950' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-950',
                   tab.disabled && 'cursor-not-allowed opacity-50'
                 )}
@@ -499,28 +502,28 @@ export default function ConfigApp(): JSX.Element {
         </aside>
 
         <section className="space-y-5">
-          {validationError ? <div className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-[10px] text-red-700">{validationError}</div> : null}
-          {saveMessage ? <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-[10px] text-zinc-700">{saveMessage}</div> : null}
+          {validationError ? <div className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] text-red-700">{validationError}</div> : null}
+          {saveMessage ? <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-[11px] text-zinc-700">{saveMessage}</div> : null}
 
           {activeTab === 'agent' ? (
             <div className="space-y-5">
               <section className="grid gap-4 rounded-xl border border-zinc-200 bg-white p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="grid gap-1">
-                    <h2 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">Agent Hook Bridge</h2>
-                    <p className="max-w-2xl text-[10px] leading-5 text-zinc-600">
+                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">Agent Hook Bridge</h2>
+                    <p className="max-w-2xl text-xs leading-5 text-zinc-600">
                       这里直接按 `open-vibe-island` 的接入思路做自动安装：每个 Agent 都可以单独安装 / 卸载受管 hook，配置文件会自动备份；如果你更想手动维护，下面也保留了对应片段。
                     </p>
                   </div>
                   <span className={cn(
-                    'inline-flex items-center rounded-full px-2.5 py-1 text-[9px] font-medium',
+                    'inline-flex items-center rounded-full px-3 py-1 text-[10px] font-medium',
                     agentSetup?.isServerRunning ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
                   )}>
                     {agentSetup?.isServerRunning ? 'Bridge 运行中' : 'Bridge 未就绪'}
                   </span>
                 </div>
 
-                <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-[10px] text-zinc-600">
+                <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
                   <p>{agentSetup?.statusMessage ?? '等待主进程提供 Hook bridge 状态。'}</p>
                   <p>Bridge 脚本：{agentSetup?.bridgeScriptPath ?? '尚未生成'}</p>
                   <p>运行时配置：{agentSetup?.runtimeEnvPath ?? '尚未生成'}</p>
@@ -529,20 +532,20 @@ export default function ConfigApp(): JSX.Element {
 
                 <div className="grid gap-3 lg:grid-cols-2">
                   <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                    <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">已接入 Agents</h3>
+                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">已接入 Agents</h3>
                     <div className="flex flex-wrap gap-1.5">
                       {supportedAgentLabels.map((label) => (
-                        <span key={label} className="inline-flex min-h-7 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-center text-[9px] leading-none text-zinc-600">
+                        <span key={label} className="inline-flex min-h-8 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-center text-[11px] leading-none text-zinc-600">
                           {label}
                         </span>
                       ))}
                     </div>
                   </div>
                   <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                    <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">已接入终端 / IDE 跳转</h3>
+                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">已接入终端 / IDE 跳转</h3>
                     <div className="flex flex-wrap gap-1.5">
                       {SUPPORTED_TERMINAL_LABELS.map((label) => (
-                        <span key={label} className="inline-flex min-h-7 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-center text-[9px] leading-none text-zinc-600">
+                        <span key={label} className="inline-flex min-h-8 items-center justify-center rounded-full border border-zinc-200 bg-white px-3 text-center text-[11px] leading-none text-zinc-600">
                           {label}
                         </span>
                       ))}
@@ -550,7 +553,7 @@ export default function ConfigApp(): JSX.Element {
                   </div>
                 </div>
 
-                <div className="grid gap-2 text-[10px] leading-5 text-zinc-500">
+                <div className="grid gap-2 text-xs leading-5 text-zinc-500">
                   <p>1. 点击安装后，会直接写入各自工具的真实配置文件，并只管理 Agent Island 自己插入的 hook。</p>
                   <p>2. 卸载时会尽量只移除受管段落，保留你原本已有的自定义 hooks。</p>
                   <p>3. Codex 会一并处理 `~/.codex/config.toml` 里的 `codex_hooks = true`，不用再手动补。</p>
@@ -559,13 +562,13 @@ export default function ConfigApp(): JSX.Element {
               </section>
 
               {agentErrorMessage ? (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] text-red-700">
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">
                   {agentErrorMessage}
                 </div>
               ) : null}
 
               {agentActionMessage ? (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] text-emerald-700">
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">
                   {agentActionMessage}
                 </div>
               ) : null}
@@ -573,12 +576,13 @@ export default function ConfigApp(): JSX.Element {
               <section className="grid gap-4 rounded-xl border border-zinc-200 bg-white p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="grid gap-1">
-                    <h2 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">自动安装</h2>
-                    <p className="max-w-2xl text-[10px] leading-5 text-zinc-600">
+                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">自动安装</h2>
+                    <p className="max-w-2xl text-xs leading-5 text-zinc-600">
                       按 Agent 单独安装，避免无端在你的 home 目录创建一堆并不用的配置目录；如果某个工具只装了一半，也会在这里明确提示你重新安装一次。
                     </p>
                   </div>
                   <Button
+                    className="h-8 px-3 text-xs"
                     size="sm"
                     variant="outline"
                     disabled={agentAction !== null}
@@ -603,18 +607,18 @@ export default function ConfigApp(): JSX.Element {
                         <article key={status.source} className="grid gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
                           <div className="flex items-start justify-between gap-3">
                             <div className="grid gap-1">
-                              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-600">{status.title}</h3>
-                              <p className="text-[10px] leading-5 text-zinc-500">{status.statusMessage}</p>
+                              <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-600">{status.title}</h3>
+                              <p className="text-xs leading-5 text-zinc-500">{status.statusMessage}</p>
                             </div>
-                            <span className={cn('inline-flex items-center rounded-full px-2.5 py-1 text-[9px] font-medium', badge.className)}>
+                            <span className={cn('inline-flex items-center rounded-full px-3 py-1 text-[10px] font-medium', badge.className)}>
                               {badge.label}
                             </span>
                           </div>
 
-                          <div className="grid gap-1.5 rounded-lg border border-zinc-200 bg-white p-3 text-[10px] text-zinc-600">
+                          <div className="grid gap-1.5 rounded-lg border border-zinc-200 bg-white p-3 text-xs text-zinc-600">
                             <p className="font-medium text-zinc-700">配置文件</p>
                             {status.configPaths.map((configPath) => (
-                              <p key={configPath} className="font-mono text-[9px] text-zinc-500">{configPath}</p>
+                              <p key={configPath} className="font-mono text-[10px] text-zinc-500">{configPath}</p>
                             ))}
                             {status.errorMessage ? (
                               <p className="text-red-600">{status.errorMessage}</p>
@@ -623,6 +627,7 @@ export default function ConfigApp(): JSX.Element {
 
                           <div className="flex flex-wrap gap-2">
                             <Button
+                              className="h-8 px-3 text-xs"
                               size="sm"
                               disabled={agentAction !== null}
                               onClick={() => {
@@ -632,6 +637,7 @@ export default function ConfigApp(): JSX.Element {
                               {isBusy && agentAction?.mode === 'install' ? '安装中...' : '安装'}
                             </Button>
                             <Button
+                              className="h-8 px-3 text-xs"
                               size="sm"
                               variant="outline"
                               disabled={agentAction !== null || (!status.isInstalled && !status.isPartiallyInstalled)}
@@ -645,7 +651,7 @@ export default function ConfigApp(): JSX.Element {
 
                           {snippets.length > 0 ? (
                             <details className="rounded-lg border border-zinc-200 bg-white p-3">
-                              <summary className="cursor-pointer list-none text-[10px] font-medium text-zinc-700">
+                              <summary className="cursor-pointer list-none text-[11px] font-medium text-zinc-700">
                                 查看手动配置片段
                               </summary>
                               <div className="mt-3 grid gap-3">
@@ -666,26 +672,32 @@ export default function ConfigApp(): JSX.Element {
                     })}
                   </div>
                 ) : (
-                  <div className="grid min-h-[160px] place-items-center rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 text-[10px] text-zinc-500">
+                  <div className="grid min-h-[160px] place-items-center rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 text-[11px] text-zinc-500">
                     还没有可用的自动安装状态。
                   </div>
                 )}
               </section>
             </div>
           ) : activeTab !== 'polling' ? (
-            <div className="grid min-h-[240px] place-items-center rounded-xl border border-zinc-200 bg-white px-4 text-[10px] text-zinc-500">
+            <div className="grid min-h-[240px] place-items-center rounded-xl border border-zinc-200 bg-white px-4 text-[11px] text-zinc-500">
               该标签稍后开放。
             </div>
           ) : (
             <div className="space-y-5">
               <section className="space-y-2">
                 <div className="flex items-start justify-between gap-3">
-                  <h2 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">请求列表</h2>
+                  <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">请求列表</h2>
                   <div className="flex items-center gap-2">
-                    <Button size="icon" variant="outline" aria-label="添加轮询请求" onClick={addPollingSource}>
+                    <Button
+                      className="h-8 w-8"
+                      size="icon"
+                      variant="outline"
+                      aria-label="添加轮询请求"
+                      onClick={addPollingSource}
+                    >
                       <Plus className="h-3 w-3" />
                     </Button>
-                    <Button size="sm" disabled={isSaving} onClick={() => void handleSave()}>
+                    <Button className="h-8 px-3 text-xs" size="sm" disabled={isSaving} onClick={() => void handleSave()}>
                       {isSaving ? '保存中...' : '保存'}
                     </Button>
                   </div>
@@ -701,7 +713,7 @@ export default function ConfigApp(): JSX.Element {
                         <div
                           key={source.id}
                           className={cn(
-                            'inline-flex items-center overflow-hidden rounded-md border bg-white text-[9px] transition-colors',
+                            'inline-flex items-center overflow-hidden rounded-md border bg-white text-[11px] transition-colors',
                             isSelected ? 'border-zinc-300 text-zinc-950 shadow-sm' : 'border-zinc-200 text-zinc-700'
                           )}
                         >
@@ -710,7 +722,7 @@ export default function ConfigApp(): JSX.Element {
                             role="tab"
                             aria-selected={isSelected}
                             className={cn(
-                              'flex h-7 items-center gap-1.5 px-2.5 transition-colors',
+                              'flex h-8 items-center gap-1.5 px-3 transition-colors',
                               isSelected ? 'bg-zinc-50 text-zinc-950' : 'hover:bg-zinc-100 hover:text-zinc-950'
                             )}
                             onClick={() => {
@@ -730,7 +742,7 @@ export default function ConfigApp(): JSX.Element {
                             type="button"
                             aria-label={isDeletePending ? `确认删除 ${formatRequestLabel(source, index)}` : `删除 ${formatRequestLabel(source, index)}`}
                             className={cn(
-                              'flex h-7 min-w-7 items-center justify-center border-l border-zinc-200 px-2 text-red-600 transition-colors hover:text-red-700',
+                              'flex h-8 min-w-8 items-center justify-center border-l border-zinc-200 px-2.5 text-red-600 transition-colors hover:text-red-700',
                               isDeletePending ? 'bg-red-50 font-medium' : 'hover:bg-red-50'
                             )}
                             onClick={() => {
@@ -749,7 +761,7 @@ export default function ConfigApp(): JSX.Element {
                     })}
                   </div>
                 ) : (
-                  <div className="grid min-h-[72px] place-items-center rounded-md border border-dashed border-zinc-200 bg-zinc-50 px-3 text-[10px] text-zinc-500">
+                  <div className="grid min-h-[72px] place-items-center rounded-md border border-dashed border-zinc-200 bg-zinc-50 px-3 text-[11px] text-zinc-500">
                     还没有轮询请求，点击右上角加号创建。
                   </div>
                 )}
@@ -758,11 +770,12 @@ export default function ConfigApp(): JSX.Element {
               {selectedSource ? (
                 <>
                   <section className="space-y-2.5">
-                    <h2 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">基础配置</h2>
+                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">基础配置</h2>
                     <div className="grid gap-4">
                       <div className="grid gap-2.5 xl:grid-cols-3">
                         <Field label="名称">
                           <Input
+                            className="h-9 text-xs file:text-xs"
                             value={selectedSource.name}
                             placeholder="例如：Service health"
                             onChange={(event) => {
@@ -786,12 +799,12 @@ export default function ConfigApp(): JSX.Element {
                               })));
                             }}
                           >
-                            <SelectTrigger>
+                            <SelectTrigger className="h-9 px-2.5 text-xs">
                               <SelectValue placeholder="选择请求方式" />
                             </SelectTrigger>
-                            <SelectContent>
+                            <SelectContent className="text-xs">
                               {REQUEST_METHODS.map((method) => (
-                                <SelectItem key={method} value={method}>{method}</SelectItem>
+                                <SelectItem className="py-1.5 text-xs" key={method} value={method}>{method}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -799,6 +812,7 @@ export default function ConfigApp(): JSX.Element {
 
                         <Field label="轮询频率">
                           <Input
+                            className="h-9 text-xs file:text-xs"
                             type="number"
                             min={1}
                             placeholder="60"
@@ -815,6 +829,7 @@ export default function ConfigApp(): JSX.Element {
 
                       <Field label="URL">
                         <Input
+                          className="h-9 text-xs file:text-xs"
                           value={selectedSource.request.url}
                           placeholder="https://api.example.com/status"
                           onChange={(event) => {
@@ -832,7 +847,7 @@ export default function ConfigApp(): JSX.Element {
                   </section>
 
                   <section className="space-y-2.5">
-                    <h2 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">请求内容</h2>
+                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">请求内容</h2>
                     <div className="grid gap-4">
                       <Field label="Headers">
                         <KeyValueEditor
@@ -857,6 +872,7 @@ export default function ConfigApp(): JSX.Element {
                           <Separator />
                           <Field label="Body">
                             <Textarea
+                              className="text-xs leading-5"
                               value={selectedSource.request.body ?? ''}
                               placeholder='例如：{ "env": "prod" }'
                               onChange={(event) => {
@@ -876,10 +892,11 @@ export default function ConfigApp(): JSX.Element {
                   </section>
 
                   <section className="space-y-2.5">
-                    <h2 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-500">字段映射</h2>
+                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">字段映射</h2>
                     <div className="grid gap-4">
                       <Field label="标题">
                         <Input
+                          className="h-9 text-xs file:text-xs"
                           value={selectedSource.fieldMappings.title}
                           placeholder="请填写，如 {{ $data.label.trim() }}"
                           onChange={(event) => {
@@ -896,6 +913,7 @@ export default function ConfigApp(): JSX.Element {
 
                       <Field label="结果">
                         <Input
+                          className="h-9 text-xs file:text-xs"
                           value={selectedSource.fieldMappings.summary ?? ''}
                           placeholder="请填写，如 {{ $data.value.toFixed(2) }}"
                           onChange={(event) => {
@@ -912,6 +930,7 @@ export default function ConfigApp(): JSX.Element {
 
                       <Field label="详情">
                         <Input
+                          className="h-9 text-xs file:text-xs"
                           value={selectedSource.fieldMappings.detail ?? ''}
                           placeholder="请填写，如 {{ $data.label.trim() }}"
                           onChange={(event) => {
@@ -929,7 +948,7 @@ export default function ConfigApp(): JSX.Element {
                   </section>
                 </>
               ) : (
-                <div className="grid min-h-[240px] place-items-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-5 text-[10px] text-zinc-500">
+                <div className="grid min-h-[240px] place-items-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-5 text-[11px] text-zinc-500">
                   点击右上角的加号创建第一个轮询请求。
                 </div>
               )}

@@ -163,11 +163,6 @@ const STANDARD_PERMISSION_OPTIONS: AgentApprovalOption[] = [
   { id: 'allow-once', label: '同意' },
 ];
 
-const CODEX_PRE_TOOL_USE_PERMISSION_OPTIONS: AgentApprovalOption[] = [
-  { id: 'deny', label: '拒绝' },
-  { id: 'allow-once', label: '前往 Codex 确认' },
-];
-
 function normalizeText(value: string | undefined, maxLength = 160): string | undefined {
   if (!value) {
     return undefined;
@@ -700,10 +695,6 @@ function parseCodexHookPayload(payload: unknown, timestampMs: number): AgentHook
     }
     case 'PreToolUse': {
       const detail = fullCommand ? normalizeMultilineText(fullCommand, 1_200) ?? toolPreview : toolPreview;
-      const approvalText = fullCommand ?? detail;
-      const approvalRequest = approvalText
-        ? buildAgentCommandApproval(approvalText, CODEX_PRE_TOOL_USE_PERMISSION_OPTIONS)
-        : undefined;
       const session = buildSession(
         'codex',
         parsed.session_id,
@@ -713,12 +704,12 @@ function parseCodexHookPayload(payload: unknown, timestampMs: number): AgentHook
         parsed.terminal_title,
         parsed.terminal_session_id,
         parsed.terminal_tty,
-        approvalRequest ? 'needs-approval' : 'running',
-        approvalRequest ? '等待你的确认' : fullCommand ? '准备执行命令' : parsed.tool_name ? `运行 ${parsed.tool_name}` : '正在执行工具',
+        'running',
+        fullCommand ? '准备执行命令' : parsed.tool_name ? `运行 ${parsed.tool_name}` : '正在执行工具',
         parsed.hook_event_name,
         prompt,
         detail,
-        approvalRequest,
+        undefined,
         {
           codexThreadId,
           cmuxSocketPath: parsed.cmux_socket_path,
@@ -729,9 +720,7 @@ function parseCodexHookPayload(payload: unknown, timestampMs: number): AgentHook
 
       return {
         session,
-        reminder: approvalRequest
-          ? buildReminder(session, timestampMs, 'attention', 'Codex 需要确认', detail ?? 'Codex 正在请求运行命令的权限。')
-          : null,
+        reminder: null,
       };
     }
     case 'PostToolUse': {

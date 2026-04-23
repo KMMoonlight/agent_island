@@ -32,4 +32,11 @@ export function registerAgentHandlers(agentHookService: AgentHookService): void 
 
     return agentHookService.resolvePendingApproval(sessionId, decision);
   });
+  ipcMain.handle(IPC_CHANNELS.AGENT.HANDOFF_APPROVAL, (_event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string') {
+      return false;
+    }
+
+    return agentHookService.handoffPendingApproval(sessionId);
+  });
 }
