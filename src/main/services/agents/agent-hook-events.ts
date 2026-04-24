@@ -153,6 +153,41 @@ const geminiHookPayloadSchema = z.object({
   tmux_socket_path: z.string().optional(),
 });
 
+const openCodeHookEventNameSchema = z.enum([
+  'SessionStart',
+  'SessionEnd',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'PermissionRequest',
+  'QuestionAsked',
+  'Stop',
+]);
+
+const openCodeHookPayloadSchema = z.object({
+  cwd: z.string(),
+  hook_event_name: openCodeHookEventNameSchema,
+  session_id: z.string(),
+  prompt: z.string().optional(),
+  model: z.string().optional(),
+  message_content: z.string().optional(),
+  last_assistant_message: z.string().optional(),
+  tool_name: z.string().optional(),
+  tool_input: z.unknown().optional(),
+  permission_id: z.string().optional(),
+  permission_title: z.string().optional(),
+  permission_description: z.string().optional(),
+  question_id: z.string().optional(),
+  question_text: z.string().optional(),
+  terminal_app: z.string().optional(),
+  terminal_session_id: z.string().optional(),
+  terminal_tty: z.string().optional(),
+  terminal_title: z.string().optional(),
+  cmux_socket_path: z.string().optional(),
+  tmux_target: z.string().optional(),
+  tmux_socket_path: z.string().optional(),
+});
+
 export type AgentHookEventUpdate = {
   session: AgentSession;
   reminder: AgentReminder | null;
@@ -718,16 +753,6 @@ function extractToolPreview(toolInput: unknown): string | undefined {
   }
 
   return extractQuestionSummary(toolInput);
-}
-
-function isQuestionRequest(toolName: string | undefined, toolInput: unknown): boolean {
-  const normalizedToolName = toolName?.trim().toLowerCase();
-
-  if (normalizedToolName === 'request_user_input' || normalizedToolName === 'askuserquestion') {
-    return true;
-  }
-
-  return extractQuestionSummary(toolInput) !== undefined;
 }
 
 function buildPermissionDetail(preferred: Array<string | undefined>): string | undefined {
@@ -1486,6 +1511,215 @@ function parseGeminiHookPayload(payload: unknown, timestampMs: number): AgentHoo
   }
 }
 
+function parseOpenCodeHookPayload(payload: unknown, timestampMs: number): AgentHookEventUpdate | null {
+  const result = openCodeHookPayloadSchema.safeParse(payload);
+
+  if (!result.success) {
+    return null;
+  }
+
+  const parsed = result.data;
+  const prompt = normalizeText(parsed.prompt ?? parsed.message_content, 140);
+  const toolPreview = extractToolPreview(parsed.tool_input) ?? stringifyUnknown(parsed.tool_input);
+  const fullCommand = normalizeApprovalCommand(
+    typeof parsed.tool_input === 'object' && parsed.tool_input !== null && 'command' in parsed.tool_input
+      ? typeof (parsed.tool_input as Record<string, unknown>).command === 'string'
+        ? ((parsed.tool_input as Record<string, unknown>).command as string)
+        : undefined
+      : undefined
+  );
+  const jumpTargetFields = {
+    cmuxSocketPath: parsed.cmux_socket_path,
+    tmuxTarget: parsed.tmux_target,
+    tmuxSocketPath: parsed.tmux_socket_path,
+  };
+
+  switch (parsed.hook_event_name) {
+    case 'SessionStart': {
+      return {
+        session: buildSession(
+          'opencode',
+          parsed.session_id,
+          parsed.cwd,
+          timestampMs,
+          parsed.terminal_app,
+          parsed.terminal_title,
+          parsed.terminal_session_id,
+          parsed.terminal_tty,
+          'running',
+          '已开始新的 OpenCode 会话',
+          parsed.hook_event_name,
+          prompt,
+          undefined,
+          undefined,
+          jumpTargetFields
+        ),
+        reminder: null,
+      };
+    }
+    case 'UserPromptSubmit': {
+      return {
+        session: buildSession(
+          'opencode',
+          parsed.session_id,
+          parsed.cwd,
+          timestampMs,
+          parsed.terminal_app,
+          parsed.terminal_title,
+          parsed.terminal_session_id,
+          parsed.terminal_tty,
+          'running',
+          '收到新的用户请求',
+          parsed.hook_event_name,
+          prompt,
+          undefined,
+          undefined,
+          jumpTargetFields
+        ),
+        reminder: null,
+      };
+    }
+    case 'PreToolUse':
+    case 'PostToolUse': {
+      const isPostToolUse = parsed.hook_event_name === 'PostToolUse';
+      return {
+        session: buildSession(
+          'opencode',
+          parsed.session_id,
+          parsed.cwd,
+          timestampMs,
+          parsed.terminal_app,
+          parsed.terminal_title,
+          parsed.terminal_session_id,
+          parsed.terminal_tty,
+          'running',
+          parsed.tool_name
+            ? `${isPostToolUse ? '完成' : '运行'} ${parsed.tool_name}`
+            : isPostToolUse ? '工具调用已完成' : '正在执行工具',
+          parsed.hook_event_name,
+          prompt,
+          fullCommand ?? toolPreview,
+          undefined,
+          jumpTargetFields
+        ),
+        reminder: null,
+      };
+    }
+    case 'PermissionRequest': {
+      const approvalTitle = normalizeText(parsed.permission_title, 120)
+        ?? (parsed.tool_name ? `Allow ${parsed.tool_name}` : 'Allow OpenCode tool');
+      const approvalSummary = normalizeText(parsed.permission_description, 140) ?? 'OpenCode needs permission to continue.';
+      const affectedPath = buildPermissionDetail([
+        fullCommand,
+        toolPreview,
+        parsed.permission_description,
+        normalizeText(parsed.tool_name, 120),
+      ]);
+      const approvalCommand = fullCommand ?? affectedPath ?? approvalTitle;
+      const approvalRequest = buildAgentCommandApproval({
+        title: approvalTitle,
+        summary: approvalSummary,
+        command: approvalCommand,
+        affectedPath,
+        toolName: normalizeText(parsed.tool_name, 80),
+        options: buildApprovalOptions(normalizeText(parsed.tool_name, 80)),
+      });
+      const session = buildSession(
+        'opencode',
+        parsed.session_id,
+        parsed.cwd,
+        timestampMs,
+        parsed.terminal_app,
+        parsed.terminal_title,
+        parsed.terminal_session_id,
+        parsed.terminal_tty,
+        'needs-approval',
+        approvalSummary,
+        parsed.hook_event_name,
+        prompt,
+        affectedPath,
+        approvalRequest,
+        jumpTargetFields
+      );
+
+      return {
+        session,
+        reminder: buildReminder(session, timestampMs, 'attention', approvalRequest.title, approvalRequest.summary, affectedPath),
+      };
+    }
+    case 'QuestionAsked': {
+      const questionPrompt = buildQuestionPrompt(parsed.tool_input, 'OpenCode has a question for you.')
+        ?? {
+          title: normalizeText(parsed.question_text, 140) ?? 'OpenCode has a question for you.',
+          questions: [{
+            header: 'Question',
+            question: normalizeText(parsed.question_text, 160) ?? 'OpenCode has a question for you.',
+            options: [],
+            multiSelect: false,
+          }],
+        };
+      const questionDetail = questionPrompt.questions[0]?.question;
+      const session = buildSession(
+        'opencode',
+        parsed.session_id,
+        parsed.cwd,
+        timestampMs,
+        parsed.terminal_app,
+        parsed.terminal_title,
+        parsed.terminal_session_id,
+        parsed.terminal_tty,
+        'needs-answer',
+        questionPrompt.title,
+        parsed.hook_event_name,
+        prompt,
+        questionDetail,
+        undefined,
+        jumpTargetFields,
+        questionPrompt
+      );
+
+      return {
+        session,
+        reminder: buildReminder(session, timestampMs, 'attention', questionPrompt.title, questionDetail ?? questionPrompt.title),
+      };
+    }
+    case 'Stop':
+    case 'SessionEnd': {
+      const summary = normalizeText(parsed.last_assistant_message, 140)
+        ?? (parsed.hook_event_name === 'SessionEnd' ? '会话已结束' : '当前回合已完成');
+      const reminderSummary = normalizeMultilineText(parsed.last_assistant_message) ?? summary;
+      const session = buildSession(
+        'opencode',
+        parsed.session_id,
+        parsed.cwd,
+        timestampMs,
+        parsed.terminal_app,
+        parsed.terminal_title,
+        parsed.terminal_session_id,
+        parsed.terminal_tty,
+        'completed',
+        summary,
+        parsed.hook_event_name,
+        prompt,
+        undefined,
+        undefined,
+        jumpTargetFields
+      );
+
+      return {
+        session,
+        reminder: buildReminder(
+          session,
+          timestampMs,
+          'success',
+          parsed.hook_event_name === 'SessionEnd' ? 'OpenCode 已结束' : 'OpenCode 已完成',
+          reminderSummary
+        ),
+      };
+    }
+  }
+}
+
 export function parseAgentHookPayload(
   source: string,
   payload: unknown,
@@ -1505,6 +1739,10 @@ export function parseAgentHookPayload(
 
   if (source === 'gemini') {
     return parseGeminiHookPayload(payload, timestampMs);
+  }
+
+  if (source === 'opencode') {
+    return parseOpenCodeHookPayload(payload, timestampMs);
   }
 
   return null;

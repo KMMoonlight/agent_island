@@ -2,6 +2,7 @@ node_modules/*
 .claude/worktrees/
 .claude/settings.local.json
 out/
+release/
 native/macos-overlay-panel/build/
 native/node_modules/
 .tmp-open-vibe-island/

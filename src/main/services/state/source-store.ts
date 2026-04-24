@@ -8,7 +8,13 @@ import type {
 } from '../../../shared/types/agent-hook';
 import type { AppConfig } from '../../../shared/types/config';
 import type { AppStatus, OverlayHostKind } from '../../../shared/types/ipc';
-import type { OverlayState, SourceState } from '../../../shared/types/source-data';
+import type {
+  ActiveFocusTimer,
+  CompletedFocusTimer,
+  FocusTimerState,
+  OverlayState,
+  SourceState,
+} from '../../../shared/types/source-data';
 
 import { createEmptySourceState } from '../sources/source-normalizer';
 
@@ -61,6 +67,13 @@ function cloneAgentState(state: AgentOverlayState): AgentOverlayState {
   };
 }
 
+function cloneFocusTimerState(state: FocusTimerState): FocusTimerState {
+  return {
+    active: state.active ? { ...state.active } : null,
+    completed: state.completed ? { ...state.completed } : null,
+  };
+}
+
 function cloneState(state: OverlayState): OverlayState {
   return {
     ...state,
@@ -71,16 +84,23 @@ function cloneState(state: OverlayState): OverlayState {
       lastError: source.lastError ? { ...source.lastError } : null,
     })),
     agent: cloneAgentState(state.agent),
+    focusTimer: cloneFocusTimerState(state.focusTimer),
   };
 }
 
 export class SourceStore {
   private state: OverlayState = {
     rotationIntervalMs: APP_CONFIG.rotationIntervalMs,
+    language: APP_CONFIG.language,
+    islandWidthPreset: APP_CONFIG.islandWidthPreset,
     sources: [],
     agent: {
       sessions: [],
       activeReminder: null,
+    },
+    focusTimer: {
+      active: null,
+      completed: null,
     },
     updatedAtMs: Date.now(),
     hasErrors: false,
@@ -93,8 +113,11 @@ export class SourceStore {
   initialize(config: AppConfig): void {
     this.state = {
       rotationIntervalMs: config.rotationIntervalMs,
+      language: config.language,
+      islandWidthPreset: config.islandWidthPreset,
       sources: config.sources.map((source) => createEmptySourceState(source)),
       agent: cloneAgentState(this.state.agent),
+      focusTimer: cloneFocusTimerState(this.state.focusTimer),
       updatedAtMs: Date.now(),
       hasErrors: false,
     };
@@ -110,6 +133,32 @@ export class SourceStore {
     this.state = {
       ...this.state,
       agent: cloneAgentState(agentState),
+      updatedAtMs: Date.now(),
+    };
+
+    this.emit();
+  }
+
+  setFocusTimer(activeFocusTimer: ActiveFocusTimer | null): void {
+    this.state = {
+      ...this.state,
+      focusTimer: {
+        active: activeFocusTimer ? { ...activeFocusTimer } : null,
+        completed: null,
+      },
+      updatedAtMs: Date.now(),
+    };
+
+    this.emit();
+  }
+
+  setCompletedFocusTimer(completedFocusTimer: CompletedFocusTimer | null): void {
+    this.state = {
+      ...this.state,
+      focusTimer: {
+        active: null,
+        completed: completedFocusTimer ? { ...completedFocusTimer } : null,
+      },
       updatedAtMs: Date.now(),
     };
 

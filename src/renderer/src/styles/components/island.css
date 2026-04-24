@@ -181,11 +181,21 @@
   mask: none;
 }
 
+.overlay-shell--native-macos-panel .island--compact,
+.overlay-shell--native-macos-panel .island--expanding,
+.overlay-shell--native-macos-panel .island--expanded,
+.overlay-shell--native-macos-panel .island--collapsing {
+  -webkit-clip-path: none;
+  clip-path: none;
+}
+
 .island--placeholder {
   justify-content: flex-start;
 }
 
 .island__compact-layer {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -199,13 +209,19 @@
 }
 
 .island--expanding .island__compact-layer,
-.island--expanded .island__compact-layer,
-.island--collapsing .island__compact-layer {
+.island--expanded .island__compact-layer {
   opacity: 0;
   pointer-events: none;
   transform: translateY(-4px) scale(0.985);
   transition-duration: 110ms, 210ms;
   transition-delay: 0ms, 0ms;
+}
+
+.island--collapsing .island__compact-layer {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px) scale(0.985);
+  transition-duration: 80ms, 120ms;
 }
 
 .island__compact-row {
@@ -221,6 +237,8 @@
 }
 
 .island__detail-layer {
+  position: relative;
+  z-index: 2;
   min-height: 0;
   height: 100%;
   padding-bottom: 10px;
@@ -287,6 +305,10 @@
   display: none;
 }
 
+.island__pixel-icon-image {
+  display: none;
+}
+
 .island__pixel-icon-mask {
   display: block;
   width: 18px;
@@ -298,6 +320,18 @@
   mask-position: center;
   mask-repeat: no-repeat;
   mask-size: contain;
+}
+
+.overlay-shell--native-macos-panel .island__pixel-icon-image {
+  display: block;
+  width: 18px;
+  height: 18px;
+  opacity: 0.95;
+  filter: brightness(0) saturate(100%) invert(84%) sepia(48%) saturate(593%) hue-rotate(356deg) brightness(101%) contrast(101%);
+}
+
+.overlay-shell--native-macos-panel .island__pixel-icon-mask {
+  display: none;
 }
 
 .island__pixel-icon--lightBulb {
@@ -334,6 +368,10 @@
 
 .island__pixel-icon--android {
   color: oklch(0.78 0.16 145);
+}
+
+.island__pixel-icon--hourglass {
+  color: oklch(0.86 0.15 88);
 }
 
 .island__pixel-icon-svg {
@@ -2031,6 +2069,69 @@
 
 .island__expanded-grid > .source-panel {
   min-height: unset;
+}
+
+.focus-timer-panel {
+  display: grid;
+  gap: 8px;
+  padding: 8px 14px 12px;
+  color: rgb(255 255 255 / 0.94);
+}
+
+.focus-timer-panel__copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.focus-timer-panel__label,
+.focus-timer-panel__time {
+  margin: 0;
+}
+
+.focus-timer-panel__label {
+  min-width: 0;
+  color: rgb(255 236 166 / 0.94);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-timer-panel__time {
+  flex: 0 0 auto;
+  font-size: 1.18rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-timer-panel__track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.16);
+}
+
+.focus-timer-panel__bar {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: rgb(255 220 116 / 0.92);
+  transform-origin: left center;
+}
+
+.focus-timer-complete-card {
+  position: relative;
+}
+
+.focus-timer-complete-card:focus-visible {
+  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

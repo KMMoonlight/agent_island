@@ -65,6 +65,7 @@ export type AppApi = {
   setOverlayExpanded: (expanded: boolean, options?: OverlayExpandOptions) => Promise<OverlayWindowMode>;
   setExpandedContentHeight: (height: number) => Promise<void>;
   setReminderHoldActive: (active: boolean) => Promise<void>;
+  dismissFocusTimerCompletion: () => Promise<void>;
   subscribeOverlayMode: (listener: (mode: OverlayWindowMode) => void) => () => void;
 };
 

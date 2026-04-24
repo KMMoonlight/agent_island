@@ -1,7 +1,9 @@
 import { BrowserWindow } from 'electron';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { APP_CONFIG } from '../../shared/constants/config';
+import type { IslandWidthPreset } from '../../shared/types/config';
 import type { OverlayHost, OverlayHostStatus, OverlayHostWindowMode } from './overlay-host';
 import { createBrowserWindowContentHost, type OverlayContentHost } from './overlay-content-host';
 import { getHostOverlayBounds, type WindowBounds } from './overlay-geometry';
@@ -17,6 +19,7 @@ type WindowAnimationSettings = {
 };
 
 const windowAnimationTimers = new WeakMap<BrowserWindow, NodeJS.Timeout>();
+const mainModuleDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 export function clearWindowAnimation(window: BrowserWindow): void {
   const activeTimer = windowAnimationTimers.get(window);
@@ -200,7 +203,7 @@ export function createOverlayBrowserWindow(): BrowserWindow {
     alwaysOnTop: true,
     hiddenInMissionControl: false,
     webPreferences: {
-      preload: path.join(__dirname, '../preload/preload.mjs'),
+      preload: path.join(mainModuleDirectory, '../preload/preload.mjs'),
       contextIsolation: true,
       sandbox: false,
     },
@@ -225,6 +228,7 @@ export function createBrowserOverlayHost(
   };
   let expandedContentHeight: number = APP_CONFIG.window.expandedHeight;
   let currentMode: OverlayHostWindowMode = 'compact';
+  let islandWidthPreset: IslandWidthPreset = APP_CONFIG.islandWidthPreset;
 
   const contentHost = createBrowserWindowContentHost(window);
 
@@ -242,7 +246,7 @@ export function createBrowserOverlayHost(
     },
     setMode: (mode) => {
       currentMode = mode;
-      animateOverlayWindow(window, getHostOverlayBounds(mode, expandedContentHeight), mode);
+      animateOverlayWindow(window, getHostOverlayBounds(mode, expandedContentHeight, islandWidthPreset), mode);
       return mode;
     },
     setExpandedContentHeight: (height) => {
@@ -262,8 +266,16 @@ export function createBrowserOverlayHost(
       expandedContentHeight = normalizedHeight;
 
       if (currentMode === 'expanded') {
-        animateOverlayWindow(window, getHostOverlayBounds('expanded', expandedContentHeight), 'expanded');
+        animateOverlayWindow(window, getHostOverlayBounds('expanded', expandedContentHeight, islandWidthPreset), 'expanded');
       }
+    },
+    setIslandWidthPreset: (preset) => {
+      if (islandWidthPreset === preset) {
+        return;
+      }
+
+      islandWidthPreset = preset;
+      animateOverlayWindow(window, getHostOverlayBounds(currentMode, expandedContentHeight, islandWidthPreset), currentMode);
     },
     destroy: () => {
       clearWindowAnimation(window);

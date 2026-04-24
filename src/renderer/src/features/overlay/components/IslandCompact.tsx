@@ -7,9 +7,10 @@ import coinIcon from '../../../assets/compact-icons/coin.svg';
 import targetIcon from '../../../assets/compact-icons/target.svg';
 import startupIcon from '../../../assets/compact-icons/startup.svg';
 import androidIcon from '../../../assets/compact-icons/android.svg';
+import hourglassIcon from '../../../assets/compact-icons/hourglass.svg';
 
 import { AGENT_TOOL_LABELS, type AgentReminder } from '@shared/types/agent-hook';
-import type { SourceState } from '@shared/types/source-data';
+import type { ActiveFocusTimer, CompletedFocusTimer, SourceState } from '@shared/types/source-data';
 
 export type PixelCompactIconVariant =
   | 'lightBulb'
@@ -20,15 +21,24 @@ export type PixelCompactIconVariant =
   | 'coin'
   | 'target'
   | 'startup'
-  | 'android';
+  | 'android'
+  | 'hourglass';
 
 type IslandCompactProps = {
+  focusTimer?: ActiveFocusTimer | null;
+  nowMs?: number;
   source: SourceState | null;
   reminder?: AgentReminder | null;
 };
 
 type PixelCompactIconProps = {
   variant: PixelCompactIconVariant;
+};
+
+type IslandPlaceholderProps = {
+  iconOnly?: boolean;
+  kind?: 'default' | 'loading' | 'error';
+  message: string;
 };
 
 const READY_ICON_VARIANTS: PixelCompactIconVariant[] = [
@@ -74,6 +84,7 @@ const ICON_ASSETS: Record<PixelCompactIconVariant, string> = {
   target: targetIcon,
   startup: startupIcon,
   android: androidIcon,
+  hourglass: hourglassIcon,
 };
 
 function compactCopy(value: string, fallback: string): string {
@@ -101,7 +112,7 @@ function pickStartupVariant(index: number): PixelCompactIconVariant {
   return STARTUP_ICON_VARIANTS[normalizedIndex] ?? 'lightBulb';
 }
 
-export function getPlaceholderIconVariant(kind: 'default' | 'loading' | 'error'): PixelCompactIconVariant {
+function getPlaceholderIconVariant(kind: 'default' | 'loading' | 'error'): PixelCompactIconVariant {
   if (kind === 'loading') {
     return pickStartupVariant(1);
   }
@@ -118,6 +129,7 @@ export function PixelCompactIcon({ variant }: PixelCompactIconProps): JSX.Elemen
 
   return (
     <span className={`island__pixel-icon island__pixel-icon--${variant}`} aria-hidden="true">
+      <img className="island__pixel-icon-image" src={iconUrl} alt="" />
       <span
         className={`island__pixel-icon-mask island__pixel-icon-mask--${variant}`}
         style={{
@@ -126,6 +138,19 @@ export function PixelCompactIcon({ variant }: PixelCompactIconProps): JSX.Elemen
         }}
       />
     </span>
+  );
+}
+
+export function IslandPlaceholder({ iconOnly = false, kind = 'default', message }: IslandPlaceholderProps): JSX.Element {
+  return (
+    <div className="island__compact-row island__compact-row--placeholder">
+      <PixelCompactIcon variant={getPlaceholderIconVariant(kind)} />
+      {iconOnly ? null : (
+        <div className="island__content island__content--compact">
+          <p className="island__title island__title--inline">{message}</p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -169,7 +194,15 @@ function getReminderSummary(reminder: AgentReminder): string {
   return compactCopy(reminder.summary, '有新的 Agent 交互');
 }
 
-export function IslandCompact({ source, reminder = null }: IslandCompactProps): JSX.Element {
+function formatTimerRemaining(endsAtMs: number, nowMs: number): string {
+  const remainingSeconds = Math.max(0, Math.ceil((endsAtMs - nowMs) / 1000));
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = remainingSeconds % 60;
+
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+export function IslandCompact({ focusTimer = null, nowMs = Date.now(), source, reminder = null }: IslandCompactProps): JSX.Element {
   if (reminder) {
     return (
       <>
@@ -182,16 +215,20 @@ export function IslandCompact({ source, reminder = null }: IslandCompactProps): 
     );
   }
 
-  if (!source) {
+  if (focusTimer) {
     return (
       <>
-        <PixelCompactIcon variant={pickStartupVariant(0)} />
+        <PixelCompactIcon variant="hourglass" />
         <div className="island__content island__content--compact">
-          <p className="island__title island__title--inline">No sources configured</p>
-          <p className="island__summary">前往设置页启用内容</p>
+          <p className="island__title island__title--inline">{focusTimer.label}</p>
+          <p className="island__summary">{formatTimerRemaining(focusTimer.endsAtMs, nowMs)}</p>
         </div>
       </>
     );
+  }
+
+  if (!source) {
+    return <IslandPlaceholder message="No sources configured" iconOnly />;
   }
 
   const title = compactCopy(source.summary.title, source.name);
@@ -204,6 +241,18 @@ export function IslandCompact({ source, reminder = null }: IslandCompactProps): 
       <div className="island__content island__content--compact">
         <p className="island__title island__title--inline">{title}</p>
         <p className="island__summary">{value}</p>
+      </div>
+    </>
+  );
+}
+
+export function FocusTimerCompletedCompact({ completedFocusTimer }: { completedFocusTimer: CompletedFocusTimer }): JSX.Element {
+  return (
+    <>
+      <PixelCompactIcon variant="hourglass" />
+      <div className="island__content island__content--compact">
+        <p className="island__title island__title--inline">倒计时结束</p>
+        <p className="island__summary">{completedFocusTimer.label}</p>
       </div>
     </>
   );

@@ -10,6 +10,7 @@ export const agentToolSchema = z.enum([
   'cursor',
   'gemini',
   'kimi',
+  'opencode',
 ]);
 
 export const codexInstallVariantIdSchema = z.enum(['standard', 'no-pretooluse']);
@@ -170,4 +171,5 @@ export const AGENT_TOOL_LABELS: Record<AgentTool, string> = {
   cursor: 'Cursor',
   gemini: 'Gemini CLI',
   kimi: 'Kimi CLI',
+  opencode: 'OpenCode',
 };

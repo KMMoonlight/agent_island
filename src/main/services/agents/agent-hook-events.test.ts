@@ -337,6 +337,47 @@ describe('parseAgentHookPayload', () => {
     expect(result?.reminder).toBeNull();
   });
 
+  it('maps OpenCode permission requests to approval reminders', () => {
+    const result = parseAgentHookPayload('opencode', {
+      cwd: '/Users/sai/Documents/agent_island',
+      hook_event_name: 'PermissionRequest',
+      session_id: 'opencode-1',
+      tool_name: 'bash',
+      tool_input: {
+        command: 'pnpm test',
+      },
+      permission_title: 'Allow bash',
+      permission_description: 'OpenCode wants to run tests.',
+    }, 1_717_171_717_000);
+
+    expect(result).not.toBeNull();
+    expect(result?.session.tool).toBe('opencode');
+    expect(result?.session.phase).toBe('needs-approval');
+    expect(result?.session.approvalRequest?.title).toBe('Allow bash');
+    expect(result?.session.approvalRequest?.command).toBe('pnpm test');
+    expect(result?.session.approvalRequest?.options).toContainEqual({
+      id: 'allow-always',
+      label: '始终允许（bash）',
+    });
+    expect(result?.reminder?.tone).toBe('attention');
+  });
+
+  it('maps OpenCode question events to structured prompts', () => {
+    const result = parseAgentHookPayload('opencode', {
+      cwd: '/Users/sai/Documents/agent_island',
+      hook_event_name: 'QuestionAsked',
+      session_id: 'opencode-2',
+      question_id: 'question-1',
+      question_text: 'Which branch should I use?',
+    }, 1_717_171_717_000);
+
+    expect(result).not.toBeNull();
+    expect(result?.session.phase).toBe('needs-answer');
+    expect(result?.session.questionPrompt?.title).toBe('Which branch should I use?');
+    expect(result?.session.questionPrompt?.questions[0]?.question).toBe('Which branch should I use?');
+    expect(result?.reminder?.tone).toBe('attention');
+  });
+
   it('ignores unsupported sources', () => {
     const result = parseAgentHookPayload('unknown-agent', {
       hook_event_name: 'Stop',

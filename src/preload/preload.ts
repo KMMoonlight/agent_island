@@ -42,6 +42,7 @@ const api: WindowApi = {
     setOverlayExpanded: (expanded, options) => ipcRenderer.invoke(IPC_CHANNELS.APP.SET_OVERLAY_EXPANDED, expanded, options),
     setExpandedContentHeight: (height) => ipcRenderer.invoke(IPC_CHANNELS.APP.SET_EXPANDED_CONTENT_HEIGHT, height),
     setReminderHoldActive: (active) => ipcRenderer.invoke(IPC_CHANNELS.APP.SET_REMINDER_HOLD_ACTIVE, active),
+    dismissFocusTimerCompletion: () => ipcRenderer.invoke(IPC_CHANNELS.APP.DISMISS_FOCUS_TIMER_COMPLETION),
     subscribeOverlayMode: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, mode: OverlayWindowMode) => {
         listener(mode);

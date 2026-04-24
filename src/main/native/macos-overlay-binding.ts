@@ -1,8 +1,12 @@
+import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { logger as baseLogger } from '../services/logger';
 
-const nativeOverlayBindingPath = path.join(__dirname, 'native/macos-overlay-panel/index.cjs');
+const loadNativeAddon = createRequire(import.meta.url);
+const mainModuleDirectory = path.dirname(fileURLToPath(import.meta.url));
+const nativeOverlayBindingPath = path.join(mainModuleDirectory, 'native/macos-overlay-panel/index.cjs');
 const logger = baseLogger.scope('native-overlay-binding');
 
 export type NativeOverlayPanelHandle = Buffer;
@@ -73,8 +77,7 @@ export function getNativeOverlayBinding(): NativeOverlayBinding | null {
   });
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const binding = require(nativeOverlayBindingPath) as NativeOverlayBinding;
+    const binding = loadNativeAddon(nativeOverlayBindingPath) as NativeOverlayBinding;
     const loadDiagnostics = binding.getLoadDiagnostics?.() ?? null;
 
     logger.info('Native overlay binding module loaded', {

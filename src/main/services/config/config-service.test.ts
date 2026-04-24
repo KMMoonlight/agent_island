@@ -47,6 +47,48 @@ describe('ConfigService', () => {
 
     expect(configPath.endsWith('sources.json')).toBe(true);
     expect(JSON.parse(contents)).toEqual({
+      focusTimers: {
+        options: [
+          {
+            durationMinutes: 5,
+            enabled: false,
+            id: 'countdown-5',
+            label: '倒计时 5 分钟',
+          },
+          {
+            durationMinutes: 10,
+            enabled: false,
+            id: 'countdown-10',
+            label: '倒计时 10 分钟',
+          },
+          {
+            durationMinutes: 15,
+            enabled: false,
+            id: 'countdown-15',
+            label: '倒计时 15 分钟',
+          },
+          {
+            durationMinutes: 20,
+            enabled: false,
+            id: 'countdown-20',
+            label: '倒计时 20 分钟',
+          },
+          {
+            durationMinutes: 25,
+            enabled: true,
+            id: 'countdown-25',
+            label: '倒计时 25 分钟',
+          },
+          {
+            durationMinutes: 30,
+            enabled: false,
+            id: 'custom',
+            label: '自定义倒计时',
+          },
+        ],
+      },
+      islandWidthPreset: 'medium',
+      language: 'zh-CN',
       rotationIntervalMs: 10000,
       sources: [],
     });
@@ -81,6 +123,9 @@ describe('ConfigService', () => {
     const config = service.reloadConfig();
 
     expect(config.rotationIntervalMs).toBe(15000);
+    expect(config.language).toBe('zh-CN');
+    expect(config.islandWidthPreset).toBe('medium');
+    expect(config.focusTimers.options.find((option) => option.id === 'countdown-25')?.enabled).toBe(true);
     expect(config.sources).toHaveLength(1);
     expect(config.sources[0]?.refreshIntervalMs).toBe(60000);
     expect(config.sources[0]?.request.body).toBe('{"hello":"world"}');

@@ -3,12 +3,15 @@ import './env-setup';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { app, BrowserWindow } from 'electron';
 
 import { IPC_CHANNELS } from '../shared/constants/channels';
 import { APP_CONFIG } from '../shared/constants/config';
+import { formatFocusTimerRuntimeLabel, type FocusTimerConfigOption } from '../shared/types/config';
 import type { OverlayWindowMode } from '../shared/types/ipc';
+import type { ActiveFocusTimer, CompletedFocusTimer } from '../shared/types/source-data';
 import { registerAgentHandlers } from './ipc/agent.handler';
 import { registerAppControlHandlers } from './ipc/app-control.handler';
 import { registerConfigHandlers } from './ipc/config.handler';
@@ -28,16 +31,17 @@ import { jumpToTerminalWindow } from './utils/jump-to-terminal';
 import { openExternalTarget } from './utils/open-external';
 
 const logger = baseLogger.scope('main');
+const mainModuleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const configService = new ConfigService();
 const sourceStore = new SourceStore();
 const sourcePoller = new SourcePoller(configService, sourceStore);
 const agentHookService = new AgentHookService(sourceStore);
 const trayMenu = new TrayMenu({
-  onRefreshSources: () => {
-    void refreshSources();
-  },
   onOpenConfig: () => {
     void createConfigWindow(getOverlayRendererTarget());
+  },
+  onStartFocusTimer: (option) => {
+    startFocusTimer(option);
   },
 });
 
@@ -45,6 +49,9 @@ let overlayHost: OverlayHost | null = null;
 let overlayWindowMode: OverlayWindowMode = 'compact';
 let expandedContentHeight: number = APP_CONFIG.window.expandedHeight;
 let reminderHoldActive = false;
+let focusTimerEndTimeout: ReturnType<typeof setTimeout> | null = null;
+let focusTimerCompletionClearTimeout: ReturnType<typeof setTimeout> | null = null;
+const FOCUS_TIMER_COMPLETION_VISIBLE_MS = 12_000;
 
 function clearMacOsSavedState(): void {
   if (process.platform !== 'darwin') {
@@ -65,6 +72,13 @@ function clearMacOsSavedState(): void {
 }
 
 function getOverlayRendererTarget(): OverlayRendererTarget {
+  if (app.isPackaged) {
+    return {
+      kind: 'file',
+      value: path.join(process.resourcesPath, 'app.asar.unpacked/out/renderer/index.html'),
+    };
+  }
+
   if (process.env.ELECTRON_RENDERER_URL) {
     return {
       kind: 'url',
@@ -74,7 +88,7 @@ function getOverlayRendererTarget(): OverlayRendererTarget {
 
   return {
     kind: 'file',
-    value: path.join(__dirname, '../renderer/index.html'),
+    value: path.join(mainModuleDirectory, '../renderer/index.html'),
   };
 }
 
@@ -167,6 +181,9 @@ const overlayHostBridge: OverlayHostBridge = {
   setReminderHoldActive: (active) => {
     reminderHoldActive = active;
   },
+  dismissFocusTimerCompletion: () => {
+    dismissFocusTimerCompletion();
+  },
   isReminderHoldActive: () => reminderHoldActive,
 };
 
@@ -184,11 +201,98 @@ function broadcastOverlayMode(mode: OverlayWindowMode): void {
   }
 }
 
+function getFocusTimerOptions(): FocusTimerConfigOption[] {
+  try {
+    return configService.getConfig().focusTimers.options;
+  } catch (error) {
+    const normalizedError = error instanceof Error ? error : new Error('Unknown focus timer config error');
+    logger.warn('Failed to read focus timer options for tray menu', {
+      message: normalizedError.message,
+    });
+    return [];
+  }
+}
+
+function updateTrayMenu(): void {
+  trayMenu.update(sourceStore.getStatus(), getFocusTimerOptions(), sourceStore.getState().focusTimer.active);
+}
+
+function clearFocusTimerEndTimeout(): void {
+  if (focusTimerEndTimeout === null) {
+    return;
+  }
+
+  clearTimeout(focusTimerEndTimeout);
+  focusTimerEndTimeout = null;
+}
+
+function clearFocusTimerCompletionTimeout(): void {
+  if (focusTimerCompletionClearTimeout === null) {
+    return;
+  }
+
+  clearTimeout(focusTimerCompletionClearTimeout);
+  focusTimerCompletionClearTimeout = null;
+}
+
+function startFocusTimer(option: FocusTimerConfigOption): void {
+  clearFocusTimerEndTimeout();
+  clearFocusTimerCompletionTimeout();
+
+  const durationMs = option.durationMinutes * 60_000;
+  const startedAtMs = Date.now();
+  const activeFocusTimer: ActiveFocusTimer = {
+    id: `${option.id}-${startedAtMs}`,
+    optionId: option.id,
+    label: formatFocusTimerRuntimeLabel(option),
+    durationMs,
+    startedAtMs,
+    endsAtMs: startedAtMs + durationMs,
+  };
+
+  logger.info('Starting focus timer', {
+    optionId: option.id,
+    durationMinutes: option.durationMinutes,
+  });
+
+  sourceStore.setFocusTimer(activeFocusTimer);
+  updateTrayMenu();
+
+  focusTimerEndTimeout = setTimeout(() => {
+    focusTimerEndTimeout = null;
+    const completedAtMs = Date.now();
+    const completedFocusTimer: CompletedFocusTimer = {
+      id: `${activeFocusTimer.id}:completed`,
+      optionId: activeFocusTimer.optionId,
+      label: activeFocusTimer.label,
+      durationMs: activeFocusTimer.durationMs,
+      completedAtMs,
+      expiresAtMs: completedAtMs + FOCUS_TIMER_COMPLETION_VISIBLE_MS,
+    };
+
+    sourceStore.setCompletedFocusTimer(completedFocusTimer);
+    updateTrayMenu();
+
+    focusTimerCompletionClearTimeout = setTimeout(() => {
+      focusTimerCompletionClearTimeout = null;
+      sourceStore.setCompletedFocusTimer(null);
+      updateTrayMenu();
+    }, FOCUS_TIMER_COMPLETION_VISIBLE_MS);
+  }, durationMs);
+}
+
+function dismissFocusTimerCompletion(): void {
+  clearFocusTimerCompletionTimeout();
+  sourceStore.setCompletedFocusTimer(null);
+  updateTrayMenu();
+}
+
 async function createApp(): Promise<void> {
   overlayWindowMode = 'compact';
   broadcastOverlayMode(overlayWindowMode);
   logger.info('Creating app overlay host');
   overlayHost = createOverlayHost(loadRenderer, overlayHostBridge, getOverlayRendererTarget());
+  overlayHost.setIslandWidthPreset(sourceStore.getState().islandWidthPreset);
   overlayHost.setExpandedContentHeight(expandedContentHeight);
   sourceStore.setOverlayHostKind(overlayHost.getStatus().active);
 
@@ -203,6 +307,7 @@ async function createApp(): Promise<void> {
 
     overlayHost.destroy();
     overlayHost = createBrowserOverlayHost(loadRenderer, `Native macOS host startup failed: ${normalizedError.message}`);
+    overlayHost.setIslandWidthPreset(sourceStore.getState().islandWidthPreset);
     sourceStore.setOverlayHostKind(overlayHost.getStatus().active);
     logger.info('Retrying startup with browser overlay host fallback');
     await overlayHost.load();
@@ -211,7 +316,7 @@ async function createApp(): Promise<void> {
 
   const hostStatus = overlayHost.getStatus();
   sourceStore.setOverlayHostKind(hostStatus.active);
-  trayMenu.update(sourceStore.getStatus());
+  updateTrayMenu();
   logger.info('Overlay host ready', hostStatus);
 
   overlayHost.onClosed(() => {
@@ -222,24 +327,16 @@ async function createApp(): Promise<void> {
   });
 }
 
-async function refreshSources(): Promise<void> {
-  try {
-    sourcePoller.reload();
-  } catch (error) {
-    const normalizedError = error instanceof Error ? error : new Error('Unknown source refresh error');
-    logger.error('Source refresh failed', { message: normalizedError.message });
-  }
-}
-
 function wireStoreUpdates(): void {
   sourceStore.subscribe((state) => {
-    trayMenu.update(sourceStore.getStatus());
+    updateTrayMenu();
 
     if (!overlayHost || overlayHost.isDestroyed()) {
       logger.warn('Skipping overlay update because host is unavailable');
       return;
     }
 
+    overlayHost.setIslandWidthPreset(state.islandWidthPreset);
     overlayHost.send(IPC_CHANNELS.OVERLAY.UPDATED, state);
   });
 }
@@ -255,6 +352,7 @@ app.whenReady().then(async () => {
     setOverlayExpanded: (expanded, options) => overlayHostBridge.setOverlayExpanded(expanded, options),
     setExpandedContentHeight: (height) => overlayHostBridge.setExpandedContentHeight(height),
     setReminderHoldActive: (active) => overlayHostBridge.setReminderHoldActive(active),
+    dismissFocusTimerCompletion: () => overlayHostBridge.dismissFocusTimerCompletion(),
   });
   wireStoreUpdates();
 
@@ -279,6 +377,8 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   logger.info('Electron app before-quit');
+  clearFocusTimerEndTimeout();
+  clearFocusTimerCompletionTimeout();
   agentHookService.stop();
   sourcePoller.stop();
 });

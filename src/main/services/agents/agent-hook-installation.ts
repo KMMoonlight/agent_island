@@ -32,6 +32,7 @@ const INSTALLABLE_AGENT_SOURCES: AgentTool[] = [
   'cursor',
   'gemini',
   'kimi',
+  'opencode',
 ];
 const DEFAULT_CODEX_INSTALL_VARIANT: CodexInstallVariantId = 'standard';
 
@@ -108,7 +109,14 @@ const INSTALL_DIRECTORIES: Record<AgentTool, InstallDirectoryDescriptor> = {
     directoryPath: path.join(os.homedir(), '.kimi'),
     configPaths: ['~/.kimi/config.toml'],
   },
+  opencode: {
+    source: 'opencode',
+    directoryPath: path.join(os.homedir(), '.config', 'opencode'),
+    configPaths: ['~/.config/opencode/plugins/open-island.js'],
+  },
 };
+
+const OPENCODE_PLUGIN_FILE_NAME = 'open-island.js';
 
 const CODEX_SESSION_START_HOOK_SPEC: HookGroupSpec = {
   event: 'SessionStart',
@@ -931,6 +939,312 @@ function renderKimiManagedBlock(event: string, matcher: string | undefined, comm
   return `${lines.join('\n')}\n`;
 }
 
+function openCodePluginDirectory(directoryPath: string): string {
+  return path.join(directoryPath, 'plugins');
+}
+
+function openCodePluginPath(directoryPath: string): string {
+  return path.join(openCodePluginDirectory(directoryPath), OPENCODE_PLUGIN_FILE_NAME);
+}
+
+function buildOpenCodePluginContents(bridgeScriptPath: string): string {
+  return `// agent-island: managed plugin - do not edit
+const BRIDGE_SCRIPT_PATH = ${JSON.stringify(bridgeScriptPath)};
+const RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
+const importBuiltin = new Function('specifier', 'return ' + 'import(specifier)');
+let spawnPromise;
+
+async function loadSpawn() {
+  spawnPromise ??= importBuiltin('node:child_process').then((module) => module.spawn);
+  return spawnPromise;
+}
+
+function firstString(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readRecord(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function stringify(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function sessionIdFrom(properties, fallback = 'opencode') {
+  const info = readRecord(properties.info);
+  return firstString(properties.sessionID, properties.sessionId, properties.session_id, properties.session, info.id, fallback) ?? fallback;
+}
+
+function cwdFrom(properties, context) {
+  const info = readRecord(properties.info);
+  const project = readRecord(context.project);
+  return firstString(properties.cwd, properties.directory, properties.worktree, info.path, info.cwd, context.worktree, context.directory, project.path, process.cwd());
+}
+
+function terminalFields() {
+  return {
+    terminal_app: firstString(process.env.TERM_PROGRAM, process.env.TERMINAL_EMULATOR),
+    terminal_session_id: firstString(process.env.TERM_SESSION_ID, process.env.TAB_ID),
+    terminal_tty: firstString(process.env.TTY),
+    terminal_title: firstString(process.env.TERM_TITLE),
+  };
+}
+
+function sendToAgentIsland(payload, timeoutMs = RESPONSE_TIMEOUT_MS) {
+  return loadSpawn().then((spawn) => new Promise((resolve) => {
+    const child = spawn(BRIDGE_SCRIPT_PATH, ['opencode'], {
+      stdio: ['pipe', 'pipe', 'ignore'],
+      env: process.env,
+    });
+    let stdout = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(null);
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+    child.on('close', () => {
+      clearTimeout(timer);
+      const trimmed = stdout.trim();
+      if (!trimmed) {
+        resolve(null);
+        return;
+      }
+      try {
+        resolve(JSON.parse(trimmed));
+      } catch {
+        resolve(null);
+      }
+    });
+    child.stdin.end(JSON.stringify(payload));
+  })).catch(() => null);
+}
+
+async function tryClientReply(client, domain, requestId, body) {
+  const target = client?.[domain]?.reply;
+  if (typeof target !== 'function') {
+    return false;
+  }
+  const attempts = [
+    () => target.call(client[domain], requestId, body),
+    () => target.call(client[domain], { requestID: requestId, body }),
+    () => target.call(client[domain], { path: { requestID: requestId }, body }),
+    () => target.call(client[domain], { param: { requestID: requestId }, body }),
+  ];
+  for (const attempt of attempts) {
+    try {
+      await attempt();
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+async function postToOpenCode(path, body) {
+  const baseUrl = firstString(process.env.OPENCODE_SERVER, process.env.OPENCODE_URL, process.env.OPENCODE_HOST);
+  if (!baseUrl || typeof fetch !== 'function') {
+    return false;
+  }
+  try {
+    const response = await fetch(new URL(path, baseUrl).toString(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function applyPermissionDirective(client, requestId, directive) {
+  if (!requestId || !directive || typeof directive !== 'object') {
+    return;
+  }
+  const reply = directive.type === 'deny' ? 'reject' : directive.reply ?? 'once';
+  const body = {
+    reply,
+    message: directive.reason,
+  };
+  if (await tryClientReply(client, 'permission', requestId, body)) {
+    return;
+  }
+  await postToOpenCode('/permission/' + encodeURIComponent(requestId) + '/reply', body);
+}
+
+async function applyQuestionDirective(client, requestId, directive) {
+  if (!requestId || !directive || typeof directive !== 'object' || directive.type !== 'answer') {
+    return;
+  }
+  const text = typeof directive.text === 'string' ? directive.text : '';
+  const body = {
+    answers: Array.isArray(directive.answers) ? directive.answers : [[text]],
+  };
+  if (await tryClientReply(client, 'question', requestId, body)) {
+    return;
+  }
+  await postToOpenCode('/question/' + encodeURIComponent(requestId) + '/reply', body);
+}
+
+function buildPayload(context, hookEventName, properties, extra = {}) {
+  return {
+    hook_event_name: hookEventName,
+    session_id: sessionIdFrom(properties),
+    cwd: cwdFrom(properties, context),
+    ...terminalFields(),
+    ...extra,
+  };
+}
+
+function questionText(properties) {
+  const questions = Array.isArray(properties.questions) ? properties.questions : [];
+  const firstQuestion = readRecord(questions[0]);
+  return firstString(properties.question, properties.text, firstQuestion.question, firstQuestion.label, properties.title);
+}
+
+export const AgentIsland = async (context) => {
+  const { client } = context;
+
+  return {
+    event: async ({ event }) => {
+      const properties = readRecord(event?.properties);
+
+      if (event?.type === 'session.created') {
+        await sendToAgentIsland(buildPayload(context, 'SessionStart', properties));
+        return;
+      }
+
+      if (event?.type === 'session.deleted') {
+        await sendToAgentIsland(buildPayload(context, 'SessionEnd', properties));
+        return;
+      }
+
+      if (event?.type === 'session.status' && firstString(properties.status) === 'idle') {
+        await sendToAgentIsland(buildPayload(context, 'Stop', properties));
+        return;
+      }
+
+      if (event?.type === 'session.idle') {
+        await sendToAgentIsland(buildPayload(context, 'Stop', properties));
+        return;
+      }
+
+      if (event?.type === 'session.updated' && properties.archived === true) {
+        await sendToAgentIsland(buildPayload(context, 'SessionEnd', properties));
+        return;
+      }
+
+      if (event?.type === 'message.updated') {
+        const info = readRecord(properties.info);
+        if (info.role === 'user') {
+          await sendToAgentIsland(buildPayload(context, 'UserPromptSubmit', properties, {
+            prompt: firstString(info.content, properties.content, properties.text),
+            message_content: stringify(info.content ?? properties.content),
+            model: firstString(info.model, properties.model),
+          }));
+        }
+        return;
+      }
+
+      if (event?.type === 'permission.asked') {
+        const requestId = firstString(properties.requestID, properties.permissionID, properties.id);
+        const response = await sendToAgentIsland(buildPayload(context, 'PermissionRequest', properties, {
+          permission_id: requestId,
+          permission_title: firstString(properties.title, properties.name, properties.tool),
+          permission_description: firstString(properties.description, properties.message, stringify(properties.metadata), stringify(properties.patterns)),
+          tool_name: firstString(properties.tool, properties.toolName),
+          tool_input: properties.input ?? properties.metadata ?? properties.patterns,
+        }));
+        await applyPermissionDirective(client, requestId, response?.directive);
+        return;
+      }
+
+      if (event?.type === 'question.asked') {
+        const requestId = firstString(properties.requestID, properties.questionID, properties.id);
+        const response = await sendToAgentIsland(buildPayload(context, 'QuestionAsked', properties, {
+          question_id: requestId,
+          question_text: questionText(properties),
+          tool_input: {
+            title: firstString(properties.title, questionText(properties), 'OpenCode question'),
+            questions: Array.isArray(properties.questions) ? properties.questions : [{
+              header: 'Question',
+              question: questionText(properties) ?? 'OpenCode has a question for you.',
+              options: [],
+            }],
+          },
+        }));
+        await applyQuestionDirective(client, requestId, response?.directive);
+      }
+    },
+
+    'tool.execute.before': async (input, output) => {
+      await sendToAgentIsland(buildPayload(context, 'PreToolUse', readRecord(input), {
+        tool_name: firstString(input?.tool, input?.name),
+        tool_input: output?.args ?? input?.args,
+      }));
+    },
+
+    'tool.execute.after': async (input, output) => {
+      await sendToAgentIsland(buildPayload(context, 'PostToolUse', readRecord(input), {
+        tool_name: firstString(input?.tool, input?.name),
+        tool_input: output?.args ?? input?.args,
+      }));
+    },
+  };
+};
+`;
+}
+
+function installOpenCode(bridgeScriptPath: string): void {
+  const descriptor = INSTALL_DIRECTORIES.opencode;
+  const pluginDirectory = openCodePluginDirectory(descriptor.directoryPath);
+  const pluginPath = openCodePluginPath(descriptor.directoryPath);
+  const manifestPath = genericManifestPath(descriptor.directoryPath, 'opencode');
+
+  ensureDirectory(pluginDirectory);
+  const pluginContents = buildOpenCodePluginContents(bridgeScriptPath);
+  const existingContents = readUtf8IfExists(pluginPath);
+
+  if (existingContents !== pluginContents) {
+    backupFileIfExists(pluginPath);
+    writeUtf8File(pluginPath, pluginContents);
+  }
+
+  writeHookManifest(manifestPath, pluginPath);
+}
+
+function uninstallOpenCode(): void {
+  const descriptor = INSTALL_DIRECTORIES.opencode;
+  const pluginPath = openCodePluginPath(descriptor.directoryPath);
+  const manifestPath = genericManifestPath(descriptor.directoryPath, 'opencode');
+
+  removeFileIfExists(pluginPath);
+  removeFileIfExists(manifestPath);
+}
+
 function buildInstalledStatus(source: AgentTool, statusMessage: string, isInstalled: boolean, isPartiallyInstalled = false): AgentHookInstallStatus {
   const descriptor = INSTALL_DIRECTORIES[source];
   return {
@@ -1081,6 +1395,15 @@ function kimiStatus(bridgeScriptPath: string): AgentHookInstallStatus {
     : buildInstalledStatus('kimi', '未安装', false);
 }
 
+function openCodeStatus(): AgentHookInstallStatus {
+  const descriptor = INSTALL_DIRECTORIES.opencode;
+  const pluginPath = openCodePluginPath(descriptor.directoryPath);
+
+  return existsSync(pluginPath)
+    ? buildInstalledStatus('opencode', '已自动安装', true)
+    : buildInstalledStatus('opencode', '未安装', false);
+}
+
 function statusForSource(source: AgentTool, bridgeScriptPath: string): AgentHookInstallStatus {
   try {
     switch (source) {
@@ -1098,6 +1421,8 @@ function statusForSource(source: AgentTool, bridgeScriptPath: string): AgentHook
         return geminiStatus(bridgeScriptPath);
       case 'kimi':
         return kimiStatus(bridgeScriptPath);
+      case 'opencode':
+        return openCodeStatus();
     }
   } catch (error) {
     const normalizedError = error instanceof Error ? error.message : '未知错误';
@@ -1133,6 +1458,9 @@ export class AgentHookInstallationManager {
       case 'kimi':
         installKimi(this.bridgeScriptPath);
         break;
+      case 'opencode':
+        installOpenCode(this.bridgeScriptPath);
+        break;
     }
 
     return this.getStatuses();
@@ -1158,6 +1486,9 @@ export class AgentHookInstallationManager {
         break;
       case 'kimi':
         uninstallKimi();
+        break;
+      case 'opencode':
+        uninstallOpenCode();
         break;
     }
 

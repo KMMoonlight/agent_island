@@ -49,6 +49,7 @@ const SUPPORTED_HOOK_SOURCES = [
   'cursor',
   'gemini',
   'kimi',
+  'opencode',
 ] as const;
 
 type HookSource = (typeof SUPPORTED_HOOK_SOURCES)[number];
@@ -61,6 +62,7 @@ const APPROVAL_CAPABLE_SOURCES: HookSource[] = [
   'factory',
   'codebuddy',
   'kimi',
+  'opencode',
 ];
 
 const QUESTION_CAPABLE_SOURCES: HookSource[] = [
@@ -70,9 +72,10 @@ const QUESTION_CAPABLE_SOURCES: HookSource[] = [
   'factory',
   'codebuddy',
   'kimi',
+  'opencode',
 ];
 
-const CLAUDE_COMPATIBLE_SOURCES: Array<{ source: Exclude<HookSource, 'codex' | 'cursor' | 'gemini' | 'kimi'> | 'claude'; title: string; configPath: string }> = [
+const CLAUDE_COMPATIBLE_SOURCES: Array<{ source: Exclude<HookSource, 'codex' | 'cursor' | 'gemini' | 'kimi' | 'opencode'> | 'claude'; title: string; configPath: string }> = [
   { source: 'claude', title: 'Claude Code', configPath: '~/.claude/settings.json' },
   { source: 'qoder', title: 'Qoder', configPath: '~/.qoder/settings.json' },
   { source: 'qwen', title: 'Qwen Code', configPath: '~/.qwen/settings.json' },
@@ -554,6 +557,19 @@ function buildKimiConfigTomlSnippet(command: string | null): string {
   ].filter((line): line is string => Boolean(line)).join('\n')).join('\n');
 }
 
+function buildOpenCodePluginSnippet(command: string | null): string {
+  const hookCommand = buildCommand(command, 'opencode') ?? '/path/to/agent-hook-bridge.sh opencode';
+  const samplePayload = JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'example', cwd: '/path/to/workspace' });
+  return [
+    'export const AgentIsland = async ({ $ }) => ({',
+    '  event: async ({ event }) => {',
+    `    await $\`printf ${JSON.stringify(samplePayload)} | ${hookCommand}\``,
+    '  },',
+    '})',
+    '',
+  ].join('\n');
+}
+
 function buildSetupSnippets(command: string | null): AgentHookSnippet[] {
   const snippets: AgentHookSnippet[] = [
     {
@@ -595,6 +611,14 @@ function buildSetupSnippets(command: string | null): AgentHookSnippet[] {
       configPath: '~/.kimi/config.toml',
       description: 'Kimi CLI 的 `[[hooks]]` TOML 片段。',
       value: buildKimiConfigTomlSnippet(command),
+    },
+    {
+      id: 'opencode-plugin',
+      source: 'opencode',
+      title: 'OpenCode',
+      configPath: '~/.config/opencode/plugins/open-island.js',
+      description: 'OpenCode 的 JS 插件会监听 session、tool、permission 和 question 事件。',
+      value: buildOpenCodePluginSnippet(command),
     },
   ];
 
@@ -700,6 +724,61 @@ function buildCursorPermissionDenyResponse(reason: string): PendingHookResponse 
       continue: true,
       permission: 'deny',
       agentMessage: reason,
+    })}\n`,
+  };
+}
+
+function buildOpenCodePermissionAllowResponse(decision: AgentApprovalDecision): PendingHookResponse {
+  return {
+    statusCode: 200,
+    contentType: 'application/json; charset=utf-8',
+    body: `${JSON.stringify({
+      directive: {
+        type: 'allow',
+        reply: decision === 'allow-always' ? 'always' : 'once',
+      },
+    })}\n`,
+  };
+}
+
+function buildOpenCodePermissionDenyResponse(reason: string): PendingHookResponse {
+  return {
+    statusCode: 200,
+    contentType: 'application/json; charset=utf-8',
+    body: `${JSON.stringify({
+      directive: {
+        type: 'deny',
+        reply: 'reject',
+        reason,
+      },
+    })}\n`,
+  };
+}
+
+function buildOpenCodeQuestionAnswerResponse(answerValues: string[]): PendingHookResponse {
+  const text = answerValues.join('\n');
+  return {
+    statusCode: 200,
+    contentType: 'application/json; charset=utf-8',
+    body: `${JSON.stringify({
+      directive: {
+        type: 'answer',
+        text,
+        answers: answerValues.length > 0 ? answerValues.map((value) => [value]) : [['']],
+      },
+    })}\n`,
+  };
+}
+
+function buildOpenCodeQuestionDenyResponse(reason: string): PendingHookResponse {
+  return {
+    statusCode: 200,
+    contentType: 'application/json; charset=utf-8',
+    body: `${JSON.stringify({
+      directive: {
+        type: 'deny',
+        reason,
+      },
     })}\n`,
   };
 }
@@ -1325,7 +1404,9 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     this.syncResolvedSession(resolvedSessionId, 'running', nextSummary);
     this.settlePendingQuestion(
       resolvedSessionId,
-      buildClaudeCompatibleQuestionAllowResponse(updatedInput)
+      pendingQuestion.source === 'opencode'
+        ? buildOpenCodeQuestionAnswerResponse(answerValues)
+        : buildClaudeCompatibleQuestionAllowResponse(updatedInput)
     );
 
     return true;
@@ -1481,10 +1562,17 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
     prompt: AgentQuestionPrompt | undefined
   ): Promise<PendingHookResponse> {
     if (!prompt) {
-      return Promise.resolve(buildClaudeCompatiblePermissionDenyResponse('Declined to answer.'));
+      return Promise.resolve(source === 'opencode'
+        ? buildOpenCodeQuestionDenyResponse('Declined to answer.')
+        : buildClaudeCompatiblePermissionDenyResponse('Declined to answer.'));
     }
 
-    this.settlePendingQuestion(sessionId, buildClaudeCompatiblePermissionDenyResponse('Declined to answer.'));
+    this.settlePendingQuestion(
+      sessionId,
+      source === 'opencode'
+        ? buildOpenCodeQuestionDenyResponse('Declined to answer.')
+        : buildClaudeCompatiblePermissionDenyResponse('Declined to answer.')
+    );
 
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -1493,7 +1581,12 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
           source,
         });
         this.syncResolvedSession(sessionId, 'completed', 'Declined to answer.');
-        this.settlePendingQuestion(sessionId, buildClaudeCompatiblePermissionDenyResponse('Declined to answer.'));
+        this.settlePendingQuestion(
+          sessionId,
+          source === 'opencode'
+            ? buildOpenCodeQuestionDenyResponse('Declined to answer.')
+            : buildClaudeCompatiblePermissionDenyResponse('Declined to answer.')
+        );
       }, CODEX_APPROVAL_MAX_WAIT_MS);
 
       this.logger.info('Waiting for agent question response', {
@@ -1600,7 +1693,9 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
         clearTimeout(pendingQuestion.timer);
       }
 
-      pendingQuestion.resolve(buildClaudeCompatiblePermissionDenyResponse('Declined to answer.'));
+      pendingQuestion.resolve(pendingQuestion.source === 'opencode'
+        ? buildOpenCodeQuestionDenyResponse('Declined to answer.')
+        : buildClaudeCompatiblePermissionDenyResponse('Declined to answer.'));
       this.pendingQuestions.delete(sessionId);
     }
   }
@@ -1634,6 +1729,12 @@ printf '%s' "$payload_json" | curl -fsS -X POST "$base_url/$source_name" \
       return isApproved
         ? buildCursorPermissionAllowResponse()
         : buildCursorPermissionDenyResponse(CODEX_APPROVAL_DENIED_REASON);
+    }
+
+    if (source === 'opencode') {
+      return isApproved
+        ? buildOpenCodePermissionAllowResponse(decision)
+        : buildOpenCodePermissionDenyResponse(CODEX_APPROVAL_DENIED_REASON);
     }
 
     if (!isApproved) {

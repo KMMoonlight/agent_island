@@ -1,10 +1,12 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { BrowserWindow } from 'electron';
 
 import type { OverlayRendererTarget } from './overlay-host';
 
 let configWindow: BrowserWindow | null = null;
+const mainModuleDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 function buildConfigUrl(rendererTarget: OverlayRendererTarget): { kind: 'url' | 'file'; value: string } {
   if (rendererTarget.kind === 'url') {
@@ -31,7 +33,7 @@ function createWindow(): BrowserWindow {
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, '../preload/preload.mjs'),
+      preload: path.join(mainModuleDirectory, '../preload/preload.mjs'),
       contextIsolation: true,
       sandbox: false,
     },

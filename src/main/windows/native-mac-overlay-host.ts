@@ -1,6 +1,7 @@
 import { screen } from 'electron';
 
 import { APP_CONFIG } from '../../shared/constants/config';
+import type { IslandWidthPreset } from '../../shared/types/config';
 import { logger as baseLogger } from '../services/logger';
 import type {
   NativeOverlayBinding,
@@ -90,8 +91,12 @@ function getPrimaryDisplayMetadata(): NativeOverlayDisplay {
   };
 }
 
-function getNativeOverlayBounds(mode: OverlayHostWindowMode): WindowBounds {
-  return getHostOverlayBounds(mode);
+function getNativeOverlayBounds(
+  mode: OverlayHostWindowMode,
+  expandedHeight: number = APP_CONFIG.window.expandedHeight,
+  islandWidthPreset: IslandWidthPreset = APP_CONFIG.islandWidthPreset
+): WindowBounds {
+  return getHostOverlayBounds(mode, expandedHeight, islandWidthPreset);
 }
 
 function logPanelDiagnostics(
@@ -130,6 +135,8 @@ export function createNativeMacOverlayHost(
   let isBridgeReady = false;
   let currentMode: OverlayHostWindowMode = 'compact';
   let expandedContentHeight: number = APP_CONFIG.window.expandedHeight;
+  let islandWidthPreset: IslandWidthPreset = APP_CONFIG.islandWidthPreset;
+  let hasLoaded = false;
   let isPointerInside = false;
   let suppressExpandUntilPointerLeaves = false;
 
@@ -175,13 +182,13 @@ export function createNativeMacOverlayHost(
   const getCurrentBounds = (): WindowBounds => {
     const display = getPrimaryDisplayMetadata();
     const nativeBounds = binding.getPanelFrame(panelHandle, display);
-    const fallbackBounds = getNativeOverlayBounds('compact');
+    const fallbackBounds = getNativeOverlayBounds('compact', expandedContentHeight, islandWidthPreset);
 
     return nativeBounds ?? fallbackBounds;
   };
 
   const ensureCompactAnchor = (): void => {
-    const compactBounds = getNativeOverlayBounds('compact');
+    const compactBounds = getNativeOverlayBounds('compact', expandedContentHeight, islandWidthPreset);
     const currentBounds = getCurrentBounds();
 
     if (currentBounds.y === compactBounds.y) {
@@ -283,7 +290,7 @@ export function createNativeMacOverlayHost(
       ensureCompactAnchor();
     }
 
-    const targetBounds = getHostOverlayBounds(mode, expandedContentHeight);
+    const targetBounds = getHostOverlayBounds(mode, expandedContentHeight, islandWidthPreset);
     const initialBounds = getCurrentBounds();
     logger.info('Animating native overlay panel', {
       mode,
@@ -485,6 +492,11 @@ export function createNativeMacOverlayHost(
           sendResponse(message.requestId, null);
           return;
         }
+        case 'app:dismiss-focus-timer-completion': {
+          bridge.dismissFocusTimerCompletion();
+          sendResponse(message.requestId, null);
+          return;
+        }
         default: {
           sendResponse(message.requestId, null, false, `Unknown channel: ${message.channel}`);
         }
@@ -575,7 +587,8 @@ export function createNativeMacOverlayHost(
         assertNativeCall(binding.loadPanelFile(panelHandle, rendererTarget.value), 'loadPanelFile');
       }
 
-      applyBounds(getNativeOverlayBounds('compact'));
+      hasLoaded = true;
+      applyBounds(getNativeOverlayBounds('compact', expandedContentHeight, islandWidthPreset));
     },
     showInactive: () => {
       assertNativeCall(binding.orderPanelFrontRegardless(panelHandle), 'orderPanelFrontRegardless');
@@ -619,6 +632,18 @@ export function createNativeMacOverlayHost(
       if (currentMode === 'expanded') {
         animatePanel('expanded');
       }
+    },
+    setIslandWidthPreset: (preset) => {
+      if (islandWidthPreset === preset) {
+        return;
+      }
+
+      islandWidthPreset = preset;
+      if (!hasLoaded) {
+        return;
+      }
+
+      animatePanel(currentMode);
     },
     destroy: () => {
       destroyResources();

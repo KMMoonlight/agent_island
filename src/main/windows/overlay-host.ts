@@ -1,4 +1,5 @@
 import type { AppConfig } from '../../shared/types/config';
+import type { IslandWidthPreset } from '../../shared/types/config';
 import type { AppStatus, OverlayHostKind, OverlayWindowMode, ConfigValidationResult } from '../../shared/types/ipc';
 import type { AgentApprovalDecision, AgentHookSetup, AgentQuestionResponse } from '../../shared/types/agent-hook';
 import type { OverlayState } from '../../shared/types/source-data';
@@ -34,6 +35,7 @@ export type OverlayHostBridge = {
   setOverlayExpanded: (expanded: boolean, options?: OverlayModeChangeOptions) => OverlayWindowMode;
   setExpandedContentHeight: (height: number) => void;
   setReminderHoldActive: (active: boolean) => void;
+  dismissFocusTimerCompletion: () => void;
   isReminderHoldActive: () => boolean;
 };
 
@@ -50,6 +52,7 @@ export type OverlayHost = {
   send: (channel: string, payload: unknown) => void;
   setMode: (mode: OverlayHostWindowMode, options?: OverlayModeChangeOptions) => OverlayHostWindowMode;
   setExpandedContentHeight: (height: number) => void;
+  setIslandWidthPreset: (preset: IslandWidthPreset) => void;
   destroy: () => void;
   getStatus: () => OverlayHostStatus;
 };

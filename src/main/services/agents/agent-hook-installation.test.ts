@@ -242,4 +242,20 @@ describe('AgentHookInstallationManager', () => {
     expect(readFileSync(configPath, 'utf8')).not.toContain('# agent-island: managed hook - do not edit');
     expect(readFileSync(configPath, 'utf8')).toContain('echo existing-kimi-hook');
   });
+
+  it('installs and uninstalls OpenCode plugin hooks', async () => {
+    const homeDirectory = createTempHome();
+    const { AgentHookInstallationManager } = await loadInstallationModule(homeDirectory);
+    const bridgeScriptPath = path.join(homeDirectory, 'agent-hook-bridge.sh');
+    const manager = new AgentHookInstallationManager(bridgeScriptPath);
+    const pluginPath = path.join(homeDirectory, '.config', 'opencode', 'plugins', 'open-island.js');
+
+    expect(manager.install('opencode').find((status) => status.source === 'opencode')?.isInstalled).toBe(true);
+    expect(existsSync(pluginPath)).toBe(true);
+    expect(readFileSync(pluginPath, 'utf8')).toContain(bridgeScriptPath);
+    expect(readFileSync(pluginPath, 'utf8')).toContain("['opencode']");
+
+    expect(manager.uninstall('opencode').find((status) => status.source === 'opencode')?.isInstalled).toBe(false);
+    expect(existsSync(pluginPath)).toBe(false);
+  });
 });

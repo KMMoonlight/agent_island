@@ -11,6 +11,7 @@ type AppControlActions = {
   setOverlayExpanded: (expanded: boolean, options?: OverlayExpandOptions) => OverlayWindowMode;
   setExpandedContentHeight: (height: number) => void;
   setReminderHoldActive: (active: boolean) => void;
+  dismissFocusTimerCompletion: () => void;
 };
 
 export function registerAppControlHandlers(sourceStore: SourceStore, actions: AppControlActions): void {
@@ -55,5 +56,8 @@ export function registerAppControlHandlers(sourceStore: SourceStore, actions: Ap
     }
 
     actions.setReminderHoldActive(active);
+  });
+  ipcMain.handle(IPC_CHANNELS.APP.DISMISS_FOCUS_TIMER_COMPLETION, () => {
+    actions.dismissFocusTimerCompletion();
   });
 }

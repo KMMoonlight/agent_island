@@ -163,17 +163,7 @@ static const CGFloat kCompactBottomDepth = 32.0 * 0.3125;
     return;
   }
 
-  CGPathRef path = [self copyVisibleShapePath];
-  if (_shapeMaskLayer == nil) {
-    _shapeMaskLayer = [[CAShapeLayer alloc] init];
-    _shapeMaskLayer.fillColor = [[NSColor blackColor] CGColor];
-  }
-
-  _shapeMaskLayer.frame = self.bounds;
-  _shapeMaskLayer.path = path;
-  _shapeMaskLayer.contentsScale = self.window != nil ? self.window.backingScaleFactor : NSScreen.mainScreen.backingScaleFactor;
-  layer.mask = _shapeMaskLayer;
-  CGPathRelease(path);
+  layer.mask = nil;
 }
 
 - (void)layout {
@@ -832,11 +822,16 @@ WKWebView* CreateWebView(OverlayPanelRecord* record, NSRect frame) {
   configuration.userContentController = contentController;
   configuration.preferences.javaScriptCanOpenWindowsAutomatically = NO;
   configuration.defaultWebpagePreferences.allowsContentJavaScript = YES;
+  [configuration.preferences setValue:@YES forKey:@"allowFileAccessFromFileURLs"];
+  [configuration setValue:@YES forKey:@"allowUniversalAccessFromFileURLs"];
 
   OverlayWebView* webView = [[[OverlayWebView alloc] initWithFrame:frame configuration:configuration] autorelease];
   webView.record = record;
   webView.navigationDelegate = handler;
   [webView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+  [webView setWantsLayer:YES];
+  [[webView layer] setOpaque:NO];
+  [[webView layer] setBackgroundColor:[[NSColor clearColor] CGColor]];
   [webView setHidden:NO];
   [webView setValue:@NO forKey:@"drawsBackground"];
   if (@available(macOS 13.0, *)) {

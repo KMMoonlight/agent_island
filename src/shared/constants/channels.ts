@@ -27,6 +27,7 @@ export const IPC_CHANNELS = {
     SET_OVERLAY_EXPANDED: 'app:set-overlay-expanded',
     SET_EXPANDED_CONTENT_HEIGHT: 'app:set-expanded-content-height',
     SET_REMINDER_HOLD_ACTIVE: 'app:set-reminder-hold-active',
+    DISMISS_FOCUS_TIMER_COMPLETION: 'app:dismiss-focus-timer-completion',
     OVERLAY_MODE_CHANGED: 'app:overlay-mode-changed',
   },
 } as const;

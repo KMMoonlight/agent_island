@@ -1,5 +1,6 @@
 import { BrowserWindow, screen } from 'electron';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { APP_CONFIG } from '../../shared/constants/config';
 import type { OverlayWindowMode } from '../../shared/types/ipc';
@@ -18,6 +19,7 @@ type WindowAnimationSettings = {
 };
 
 const windowAnimationTimers = new WeakMap<BrowserWindow, NodeJS.Timeout>();
+const mainModuleDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 function getOverlayTop(display: Electron.Display, mode: OverlayWindowMode): number {
   const compactTop = display.workArea.y - APP_CONFIG.window.compactHeight + APP_CONFIG.window.compactTopMargin;
@@ -204,7 +206,7 @@ export function createOverlayWindow(): BrowserWindow {
     alwaysOnTop: true,
     hiddenInMissionControl: false,
     webPreferences: {
-      preload: path.join(__dirname, '../preload/preload.mjs'),
+      preload: path.join(mainModuleDirectory, '../preload/preload.mjs'),
       contextIsolation: true,
       sandbox: false,
     },
