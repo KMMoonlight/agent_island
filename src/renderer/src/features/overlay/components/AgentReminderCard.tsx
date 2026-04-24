@@ -1,6 +1,6 @@
 import type { AgentApprovalDecision, AgentReminder, AgentSession } from '@shared/types/agent-hook';
 
-import { renderAgentRichText } from './AgentRichText';
+import { AgentRichText } from './AgentRichText';
 
 const PHASE_LABELS = {
   running: 'Running',
@@ -53,23 +53,23 @@ export function AgentReminderCard({
   const content = (
     <>
       <header className="agent-card__header">
-        <p className="agent-card__title">{renderAgentRichText(reminder.title)}</p>
+        <AgentRichText className="agent-card__title" value={reminder.title} />
         <div className="agent-card__meta-row">
           {session?.terminalLabel ? <p className="agent-card__meta">{session.terminalLabel}</p> : null}
           <span className="agent-card__phase">{PHASE_LABELS[reminder.phase]}</span>
         </div>
       </header>
       <div className="agent-card__body">
-        <p className="agent-card__summary">{renderAgentRichText(reminder.summary)}</p>
+        <AgentRichText className="agent-card__summary" value={reminder.summary} />
         {approvalRequest ? (
           <div className="agent-card__approval-preview">
-            <p className="agent-card__approval-command">{renderAgentRichText(approvalRequest.command)}</p>
+            <AgentRichText className="agent-card__approval-command" value={approvalRequest.command} />
             {approvalRequest.affectedPath ? (
-              <p className="agent-card__approval-path">{renderAgentRichText(approvalRequest.affectedPath)}</p>
+              <AgentRichText className="agent-card__approval-path" value={approvalRequest.affectedPath} />
             ) : null}
           </div>
         ) : reminder.detail ? (
-          <p className="agent-card__detail">{renderAgentRichText(reminder.detail)}</p>
+          <AgentRichText className="agent-card__detail" value={reminder.detail} />
         ) : null}
       </div>
     </>

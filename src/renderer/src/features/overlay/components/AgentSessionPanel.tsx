@@ -1,5 +1,7 @@
 import { AGENT_TOOL_LABELS, type AgentSession } from '@shared/types/agent-hook';
 
+import { AgentRichText } from './AgentRichText';
+
 const PHASE_LABELS = {
   running: 'Running',
   'needs-approval': 'Needs approval',
@@ -23,9 +25,14 @@ export function AgentSessionPanel({ session }: { session: AgentSession }): JSX.E
       </div>
 
       <div className="agent-session-panel__body">
-        <p className="agent-session-panel__summary">{session.summary}</p>
-        {session.prompt ? <p className="agent-session-panel__prompt">你：{session.prompt}</p> : null}
-        {session.detail ? <p className="agent-session-panel__detail">{session.detail}</p> : null}
+        <AgentRichText className="agent-session-panel__summary" value={session.summary} />
+        {session.prompt ? (
+          <div className="agent-session-panel__prompt">
+            <span className="agent-session-panel__prompt-label">你：</span>
+            <AgentRichText className="agent-session-panel__prompt-body" value={session.prompt} />
+          </div>
+        ) : null}
+        {session.detail ? <AgentRichText className="agent-session-panel__detail" value={session.detail} /> : null}
         {session.terminalLabel ? <p className="agent-session-panel__terminal">{session.terminalLabel}</p> : null}
       </div>
     </article>

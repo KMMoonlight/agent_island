@@ -237,7 +237,8 @@ Mappings can also use simple templates against the full payload:
 ```json
 {
   "title": "{{ $data.current.temperature_2m }} C",
-  "summary": "Weather code {{ $data.current.weather_code }}"
+  "summary": "Weather code {{ $data.current.weather_code }}",
+  "detail": "{{ 100 - $data.current.humidity_2m }}% remaining"
 }
 ```
 

@@ -1,40 +1,21 @@
-import { Fragment, type JSX } from 'react';
+import type { JSX } from 'react';
 
-function renderInlineCode(line: string, keyPrefix: string): JSX.Element[] {
-  const segments = line.split(/(`[^`]+`)/g);
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
-  return segments.map((segment, index) => {
-    const key = `${keyPrefix}-${index}`;
+type AgentRichTextProps = {
+  className?: string;
+  value: string;
+};
 
-    if (segment.startsWith('`') && segment.endsWith('`') && segment.length >= 2) {
-      return (
-        <code key={key} className="agent-rich-text__code">
-          {segment.slice(1, -1)}
-        </code>
-      );
-    }
+export function AgentRichText({ className, value }: AgentRichTextProps): JSX.Element {
+  const resolvedClassName = className ? `agent-rich-text ${className}` : 'agent-rich-text';
 
-    return (
-      <Fragment key={key}>
-        {segment}
-      </Fragment>
-    );
-  });
-}
-
-export function renderAgentRichText(value: string): JSX.Element[] {
-  const lines = value.split('\n');
-
-  return lines.flatMap((line, index) => {
-    const nodes = renderInlineCode(line, `line-${index}`);
-
-    if (index === lines.length - 1) {
-      return nodes;
-    }
-
-    return [
-      ...nodes,
-      <br key={`break-${index}`} />,
-    ];
-  });
+  return (
+    <div className={resolvedClassName}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {value}
+      </ReactMarkdown>
+    </div>
+  );
 }

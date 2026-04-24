@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 
 import type { AgentQuestionResponse, AgentReminder, AgentSession } from '@shared/types/agent-hook';
 
-import { renderAgentRichText } from './AgentRichText';
+import { AgentRichText } from './AgentRichText';
 
 const PHASE_LABELS = {
   running: 'Running',
@@ -100,14 +100,14 @@ export function AgentQuestionCard({
     <article className="agent-card agent-card--attention">
       <div className="agent-card__main">
         <header className="agent-card__header">
-          <p className="agent-card__title">{renderAgentRichText(reminder.title)}</p>
+          <AgentRichText className="agent-card__title" value={reminder.title} />
           <div className="agent-card__meta-row">
             {session.terminalLabel ? <p className="agent-card__meta">{session.terminalLabel}</p> : null}
             <span className="agent-card__phase">{PHASE_LABELS[session.phase]}</span>
           </div>
         </header>
         <div className="agent-card__body">
-          <p className="agent-card__summary">{renderAgentRichText(reminder.summary)}</p>
+          <AgentRichText className="agent-card__summary" value={reminder.summary} />
           <div className="agent-question-card">
             {(prompt?.questions ?? []).map((question) => {
               const selected = new Set(selectedAnswers[question.question] ?? []);

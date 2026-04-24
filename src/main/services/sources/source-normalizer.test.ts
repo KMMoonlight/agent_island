@@ -156,6 +156,28 @@ describe('source-normalizer', () => {
     expect(state.items[0]?.detail).toBe('Ready · 12.3');
   });
 
+  it('supports arithmetic, concatenation, and conditional expressions around $data references', () => {
+    const config = createJsonConfig({
+      fieldMappings: {
+        title: "{{ 'Progress ' + $data.label.trim() }}",
+        summary: '{{ 100 - $data.value }}',
+        detail: "{{ $data.value >= 40 ? 'done' : 'pending' }} / {{ ($data.value ?? 0) + 5 }}",
+      },
+    });
+    const state = normalizeSourceState(config, {
+      fetchedAtMs: 1710000000000,
+      payload: {
+        label: '  Alpha  ',
+        value: 42,
+      },
+      items: [{}],
+    });
+
+    expect(state.summary.title).toBe('Progress Alpha');
+    expect(state.summary.text).toBe('58');
+    expect(state.items[0]?.detail).toBe('done / 47');
+  });
+
   it('uses None for any missing title, summary, or detail field', () => {
     const config = createJsonConfig();
     const state = normalizeSourceState(config, {

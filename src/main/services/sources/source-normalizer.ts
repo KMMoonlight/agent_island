@@ -9,6 +9,7 @@ import type { SourceFetchResult } from './types';
 
 const TEMPLATE_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const DIRECT_DATA_PATH_PATTERN = /^\$data(?:\.[A-Za-z_$][\w$]*)*$/;
+const DATA_REFERENCE_PATTERN = /\$data(?:\b|[.\[])/;
 const BLOCKED_EXPRESSION_PATTERN = /(?:^|[^\w$])(constructor|prototype|__proto__|globalThis|window|document|process|require|Function|eval|import|export|this)(?:[^\w$]|$)|;|=>/;
 const ASSIGNMENT_PATTERN = /(^|[^=!<>])=([^=]|$)/;
 const PATH_LIKE_MAPPING_PATTERN = /^(?:[a-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*$/;
@@ -56,7 +57,7 @@ function evaluateTemplateExpression(expression: string, context: Record<string, 
     return resolveTemplatePath(expression, context);
   }
 
-  if (!expression.startsWith('$data') || isBlockedExpression(expression)) {
+  if (!DATA_REFERENCE_PATTERN.test(expression) || isBlockedExpression(expression)) {
     return undefined;
   }
 
